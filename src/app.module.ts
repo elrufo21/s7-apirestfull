@@ -8,12 +8,18 @@ import { TenantDatabaseModule } from './tenant-database/tenant-database.module';
 import { UserDataModule } from './user-data/user-data.module';
 import { SunatModule } from './sunat/sunat.module';
 import { EmailModule } from './email/email.module';
+import { RealtimeModule } from './realtime/realtime.module';
+import { FilesModule } from './files/files.module';
+import { SaleOrdersModule } from './sale-orders/sale-orders.module';
+
+const appEnv = process.env.APP_ENV ?? process.env.NODE_ENV;
+const envFilePath = appEnv ? [`.env.${appEnv}`, '.env'] : '.env';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: '.env',
+      envFilePath,
     }),
 
     DatabaseModule,
@@ -24,6 +30,9 @@ import { EmailModule } from './email/email.module';
     UserDataModule,
     SunatModule,
     EmailModule,
+    RealtimeModule,
+    FilesModule,
+    SaleOrdersModule,
   ],
 })
 export class AppModule {}
