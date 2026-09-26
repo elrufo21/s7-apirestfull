@@ -1,252 +1,190 @@
-ALTER TABLE public.account_move_lines
-ADD COLUMN IF NOT EXISTS sale_order_line_id bigint;
+-- Migración: Renombrar order_id a position en account_move_lines
+-- y actualizar triggers y funciones relacionadas
 
+BEGIN;
+
+-- 1. Renombrar columna en account_move_lines si aún no ha sido renombrada
 DO $$
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1
-    FROM pg_constraint
-    WHERE conname = 'account_move_lines_sale_order_line_id_fkey'
+  IF EXISTS (
+    SELECT 1 
+    FROM information_schema.columns 
+    WHERE table_schema = 'public' 
+      AND table_name = 'account_move_lines' 
+      AND column_name = 'order_id'
+  ) AND NOT EXISTS (
+    SELECT 1 
+    FROM information_schema.columns 
+    WHERE table_schema = 'public' 
+      AND table_name = 'account_move_lines' 
+      AND column_name = 'position'
   ) THEN
-    ALTER TABLE public.account_move_lines
-    ADD CONSTRAINT account_move_lines_sale_order_line_id_fkey
-    FOREIGN KEY (sale_order_line_id)
-    REFERENCES public.sale_order_lines(line_id);
+    ALTER TABLE public.account_move_lines RENAME COLUMN order_id TO position;
   END IF;
 END $$;
 
-CREATE INDEX IF NOT EXISTS account_move_lines_sale_order_line_id_idx
-ON public.account_move_lines(sale_order_line_id);
+-- 2. Recrear el trigger tgr_account_move_lines_refresh_reversal con position
+DROP TRIGGER IF EXISTS tgr_account_move_lines_refresh_reversal ON public.account_move_lines;
 
-CREATE OR REPLACE FUNCTION public.fnc_sale_order_audit_insert(
-  in_group_id bigint,
-  ij_files jsonb,
-  in_user_id bigint,
-  id_creation_date timestamp without time zone,
-  in_order_id bigint,
-  it_action_id text,
-  it_content text DEFAULT NULL,
-  it_edi_code text DEFAULT NULL,
-  it_edi_message text DEFAULT NULL
-)
-RETURNS TABLE(oj_info jsonb, oj_data jsonb)
-LANGUAGE plpgsql
-AS $function$
-BEGIN
-  INSERT INTO public.sale_order_audit (
-    group_id,
-    files,
-    user_id,
-    creation_date,
-    order_id,
-    action_id,
-    content,
-    edi_code,
-    edi_message
-  )
-  VALUES (
-    in_group_id,
-    COALESCE(ij_files, '[]'::jsonb),
-    in_user_id,
-    COALESCE(id_creation_date, CURRENT_TIMESTAMP),
-    in_order_id,
-    it_action_id,
-    it_content,
-    it_edi_code,
-    it_edi_message
-  );
+CREATE TRIGGER tgr_account_move_lines_refresh_reversal
+AFTER INSERT OR DELETE OR UPDATE OF move_id, position, quantity, type
+ON public.account_move_lines
+FOR EACH ROW
+EXECUTE FUNCTION public.trg_fnc_account_move_lines_refresh_reversal();
 
-  oj_info := jsonb_build_object(
-    'code', 203,
-    'type', 'success',
-    'action', 'insert',
-    'message', '¡Se realizó el registro con éxito!'
-  );
-  oj_data := jsonb_build_object('order_id', in_order_id);
-  RETURN NEXT;
-
-EXCEPTION
-  WHEN OTHERS THEN
-    RAISE EXCEPTION 'Error en fnc_sale_order_audit_insert: % %', SQLSTATE, SQLERRM;
-END;
-$function$;
-
-CREATE OR REPLACE FUNCTION public.fnc_sale_order_sync_invoiced_from_move(
-  in_move_id bigint,
-  in_user_id bigint,
-  in_group_id bigint
-)
-RETURNS TABLE(oj_info jsonb, oj_data jsonb)
+-- 3. Actualizar función de reversión de notas de crédito fnc_account_move_refresh_reversal
+CREATE OR REPLACE FUNCTION public.fnc_account_move_refresh_reversal(in_parent_move_id bigint)
+RETURNS void
 LANGUAGE plpgsql
 AS $function$
 DECLARE
-  pn_updated_count integer := 0;
-  pt_message_text text;
+  pb_fully_reversed boolean;
+  pn_invoice_total numeric;
+  pn_applied_amount numeric;
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1
-    FROM public.account_move am
-    WHERE am.move_id = in_move_id
-      AND am.group_id = in_group_id
-      AND am.state = 'posted'
-  ) THEN
-    RAISE EXCEPTION 'La factura % debe estar registrada para sincronizar venta', in_move_id;
-  END IF;
-
-  WITH affected_sale_lines AS (
-    SELECT DISTINCT aml.sale_order_line_id AS line_id
-    FROM public.account_move_lines aml
-    INNER JOIN public.account_move am
-      ON am.move_id = aml.move_id
-    WHERE aml.move_id = in_move_id
-      AND am.group_id = in_group_id
-      AND aml.sale_order_line_id IS NOT NULL
-  ),
-  invoiced_by_line AS (
-    SELECT
-      aml.sale_order_line_id AS line_id,
-      SUM(COALESCE(aml.quantity, 0)) AS invoiced_quantity
-    FROM public.account_move_lines aml
-    INNER JOIN public.account_move am
-      ON am.move_id = aml.move_id
-    WHERE am.group_id = in_group_id
-      AND am.state = 'posted'
-      AND aml.sale_order_line_id IN (SELECT line_id FROM affected_sale_lines)
-    GROUP BY aml.sale_order_line_id
-  ),
-  updated AS (
-    UPDATE public.sale_order_lines sol
-    SET
-      invoiced_total = COALESCE(ibl.invoiced_quantity, 0),
-      invoiced_residual = GREATEST(
-        COALESCE(sol.quantity, 0) - COALESCE(ibl.invoiced_quantity, 0),
-        0
-      )
-    FROM invoiced_by_line ibl
-    WHERE sol.line_id = ibl.line_id
-    RETURNING sol.line_id
-  )
-  SELECT count(*)
-  INTO pn_updated_count
-  FROM updated;
-
-  oj_info := jsonb_build_object(
-    'code', 203,
-    'type', 'success',
-    'action', 'sync_invoiced',
-    'message', 'Cantidades facturadas sincronizadas.'
-  );
-  oj_data := jsonb_build_object(
-    'move_id', in_move_id,
-    'updated_lines', pn_updated_count
-  );
-  RETURN NEXT;
-
-EXCEPTION
-  WHEN OTHERS THEN
-    GET STACKED DIAGNOSTICS pt_message_text = MESSAGE_TEXT;
-    oj_info := jsonb_build_object(
-      'code', 402,
-      'type', 'error',
-      'action', 'sync_invoiced',
-      'message', 'No se pudo sincronizar cantidades facturadas.',
-      'sqlstate', SQLSTATE,
-      'sqlerrm', SQLERRM,
-      'message_text', pt_message_text
-    );
-    oj_data := jsonb_build_object('move_id', in_move_id);
-    RETURN NEXT;
-END;
-$function$;
-
-CREATE OR REPLACE FUNCTION public.fnc_sale_order_confirm(
-  in_user_id integer,
-  in_group_id integer,
-  ij_companies jsonb,
-  it_action text,
-  ij_data jsonb
-)
-RETURNS TABLE(oj_info jsonb, oj_data jsonb, oj_gby_data jsonb, oj_audit jsonb, oj_stat jsonb)
-LANGUAGE plpgsql
-AS $function$
-DECLARE
-  pn_order_id bigint;
-  pt_state text;
-  pt_message_text text;
-BEGIN
-  pn_order_id := NULLIF(ij_data->>'order_id', '')::bigint;
-
-  SELECT so.state
-  INTO pt_state
-  FROM public.sale_order so
-  WHERE so.order_id = pn_order_id
-    AND so.group_id = in_group_id
-  FOR UPDATE;
-
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'No existe la orden de venta % para el grupo %', pn_order_id, in_group_id;
-  END IF;
-
-  IF pt_state = 'S' THEN
-    oj_info := jsonb_build_object(
-      'code', 203,
-      'type', 'success',
-      'action', 'confirm',
-      'message', 'La cotización ya estaba enviada.'
-    );
-    oj_data := jsonb_build_object('order_id', pn_order_id);
-    RETURN NEXT;
+  IF in_parent_move_id IS NULL THEN
     RETURN;
   END IF;
 
-  IF pt_state NOT IN ('D', 'S') THEN
-    RAISE EXCEPTION 'La orden de venta % no está en estado confirmable', pn_order_id;
+  -- Serialize credit-note confirmations for the same invoice.
+  PERFORM 1
+  FROM public.account_move
+  WHERE move_id = in_parent_move_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RETURN;
   END IF;
 
-  UPDATE public.sale_order
+  -- Every posted credit-note line must still identify its source by position.
+  IF EXISTS (
+    SELECT 1
+    FROM public.account_move credit
+    JOIN public.account_move_lines credit_line
+      ON credit_line.move_id = credit.move_id
+     AND COALESCE(credit_line.type, 'L') = 'L'
+    LEFT JOIN public.account_move_lines source_line
+      ON source_line.move_id = in_parent_move_id
+     AND source_line.position = credit_line.position
+     AND COALESCE(source_line.type, 'L') = 'L'
+    WHERE credit.parent_id = in_parent_move_id
+      AND credit.state = 'posted'
+      AND (
+        credit.document = 'CN'
+        OR credit.document_type = 'credit_note'
+        OR credit.type IN ('out_refund', 'in_refund')
+      )
+      AND source_line.line_id IS NULL
+  ) THEN
+    RAISE EXCEPTION
+      'La nota de crédito contiene una línea que no corresponde a la factura original (%)',
+      in_parent_move_id;
+  END IF;
+
+  WITH source_quantities AS (
+    SELECT
+      source_line.line_id,
+      GREATEST(COALESCE(source_line.quantity, 0), 0) AS source_quantity,
+      reversed.reversed_quantity
+    FROM public.account_move_lines source_line
+    CROSS JOIN LATERAL (
+      SELECT COALESCE(SUM(GREATEST(COALESCE(credit_line.quantity, 0), 0)), 0)
+             AS reversed_quantity
+      FROM public.account_move credit
+      JOIN public.account_move_lines credit_line
+        ON credit_line.move_id = credit.move_id
+       AND credit_line.position = source_line.position
+       AND COALESCE(credit_line.type, 'L') = 'L'
+      WHERE credit.parent_id = in_parent_move_id
+        AND credit.state = 'posted'
+        AND (
+          credit.document = 'CN'
+          OR credit.document_type = 'credit_note'
+          OR credit.type IN ('out_refund', 'in_refund')
+        )
+    ) reversed
+    WHERE source_line.move_id = in_parent_move_id
+      AND COALESCE(source_line.type, 'L') = 'L'
+  )
+  UPDATE public.account_move_lines source_line
   SET
-    state = 'S',
-    modification_user = in_user_id,
-    modification_date = CURRENT_TIMESTAMP
-  WHERE order_id = pn_order_id;
-
-  PERFORM *
-  FROM public.fnc_sale_order_audit_insert(
-    in_group_id::bigint,
-    '[]'::jsonb,
-    in_user_id::bigint,
-    CURRENT_TIMESTAMP::timestamp without time zone,
-    pn_order_id,
-    'U2'::text,
-    'Cotización enviada.'::text
-  );
-
-  oj_info := jsonb_build_object(
-    'code', 203,
-    'type', 'success',
-    'action', 'confirm',
-      'message', 'Cotización enviada.'
-  );
-  oj_data := jsonb_build_object('order_id', pn_order_id);
-  RETURN NEXT;
-
-EXCEPTION
-  WHEN OTHERS THEN
-    GET STACKED DIAGNOSTICS pt_message_text = MESSAGE_TEXT;
-    oj_info := jsonb_build_object(
-      'code', 402,
-      'type', 'error',
-      'action', 'confirm',
-      'message', 'No se pudo confirmar la orden.',
-      'sqlstate', SQLSTATE,
-      'sqlerrm', SQLERRM,
-      'message_text', pt_message_text
+    quantity_reversed = reversed_quantity,
+    quantity_to_be_reversed = GREATEST(source_quantity - reversed_quantity, 0)
+  FROM source_quantities quantities
+  WHERE source_line.line_id = quantities.line_id
+    AND (
+      source_line.quantity_reversed IS DISTINCT FROM
+        quantities.reversed_quantity
+      OR source_line.quantity_to_be_reversed IS DISTINCT FROM
+        GREATEST(quantities.source_quantity - quantities.reversed_quantity, 0)
     );
-    oj_data := jsonb_build_object('order_id', pn_order_id);
-    RETURN NEXT;
+
+  SELECT
+    EXISTS (
+      SELECT 1
+      FROM public.account_move_lines
+      WHERE move_id = in_parent_move_id
+        AND COALESCE(type, 'L') = 'L'
+    )
+    AND NOT EXISTS (
+      SELECT 1
+      FROM public.account_move_lines
+      WHERE move_id = in_parent_move_id
+        AND COALESCE(type, 'L') = 'L'
+        AND COALESCE(quantity_to_be_reversed, GREATEST(COALESCE(quantity, 0), 0)) > 0
+    )
+  INTO pb_fully_reversed;
+
+  IF pb_fully_reversed THEN
+    UPDATE public.account_move
+    SET
+      reversed = B'1',
+      payment_state = 'reversed',
+      amount_to_be_paid = 0
+    WHERE move_id = in_parent_move_id
+      AND (
+        reversed IS DISTINCT FROM B'1'
+        OR payment_state IS DISTINCT FROM 'reversed'
+        OR amount_to_be_paid IS DISTINCT FROM 0
+      );
+  ELSE
+    -- If a full reversal was undone, recover the real payment state from the bridge.
+    SELECT
+      GREATEST(COALESCE(move.amount_withtaxed, 0), 0),
+      LEAST(
+        GREATEST(COALESCE(SUM(link.amount), 0), 0),
+        GREATEST(COALESCE(move.amount_withtaxed, 0), 0)
+      )
+    INTO pn_invoice_total, pn_applied_amount
+    FROM public.account_move move
+    LEFT JOIN public.payment_account_move link ON link.move_id = move.move_id
+    WHERE move.move_id = in_parent_move_id
+    GROUP BY move.amount_withtaxed;
+
+    UPDATE public.account_move
+    SET
+      reversed = B'0',
+      amount_paid = CASE
+        WHEN payment_state = 'reversed' THEN pn_applied_amount
+        ELSE amount_paid
+      END,
+      amount_to_be_paid = CASE
+        WHEN payment_state = 'reversed' THEN GREATEST(pn_invoice_total - pn_applied_amount, 0)
+        ELSE amount_to_be_paid
+      END,
+      payment_state = CASE
+        WHEN payment_state <> 'reversed' THEN payment_state
+        WHEN pn_applied_amount >= pn_invoice_total AND pn_invoice_total > 0 THEN 'paid'
+        WHEN pn_applied_amount > 0 THEN 'partial'
+        ELSE 'not_paid'
+      END
+    WHERE move_id = in_parent_move_id
+      AND (reversed IS DISTINCT FROM B'0' OR payment_state = 'reversed');
+  END IF;
 END;
 $function$;
 
+-- 4. Actualizar fnc_sale_order_create_invoice para insertar en position en account_move_lines
 CREATE OR REPLACE FUNCTION public.fnc_sale_order_create_invoice(
   in_user_id integer,
   in_group_id integer,
@@ -278,19 +216,16 @@ DECLARE
   pt_message_text text;
 BEGIN
   pn_order_id := NULLIF(ij_data->>'order_id', '')::bigint;
-  pb_has_invoice_lines :=
-    COALESCE(
-      jsonb_typeof(ij_data->'invoice_lines') = 'array'
-      AND jsonb_array_length(ij_data->'invoice_lines') > 0,
-      false
-    );
 
-  SELECT so.*
+  IF pn_order_id IS NULL THEN
+    RAISE EXCEPTION 'Falta el id de la orden de venta';
+  END IF;
+
+  SELECT *
   INTO pr_order
   FROM public.sale_order so
   WHERE so.order_id = pn_order_id
-    AND so.group_id = in_group_id
-  FOR UPDATE;
+    AND so.group_id = in_group_id;
 
   IF NOT FOUND THEN
     RAISE EXCEPTION 'No existe la orden de venta % para el grupo %', pn_order_id, in_group_id;
@@ -322,34 +257,19 @@ BEGIN
     RAISE EXCEPTION 'La orden de venta % ya tiene una factura borrador pendiente', pn_order_id;
   END IF;
 
-  IF pb_has_invoice_lines AND EXISTS (
-    WITH requested_lines AS (
-      SELECT
-        NULLIF(item->>'line_id', '')::bigint AS line_id,
-        NULLIF(item->>'quantity', '')::double precision AS quantity_to_invoice
-      FROM jsonb_array_elements(ij_data->'invoice_lines') item
-    )
-    SELECT 1
-    FROM requested_lines
-    WHERE line_id IS NULL
-      OR quantity_to_invoice IS NULL
-      OR quantity_to_invoice <= 0
-  ) THEN
-    RAISE EXCEPTION 'Las líneas a facturar tienen cantidades inválidas';
-  END IF;
+  pb_has_invoice_lines :=
+    ij_data ? 'invoice_lines'
+    AND jsonb_typeof(ij_data->'invoice_lines') = 'array'
+    AND jsonb_array_length(ij_data->'invoice_lines') > 0;
 
   IF pb_has_invoice_lines AND EXISTS (
-    WITH requested_lines AS (
-      SELECT DISTINCT NULLIF(item->>'line_id', '')::bigint AS line_id
-      FROM jsonb_array_elements(ij_data->'invoice_lines') item
-    )
     SELECT 1
-    FROM requested_lines req
+    FROM jsonb_array_elements(ij_data->'invoice_lines') item
     WHERE NOT EXISTS (
       SELECT 1
       FROM public.sale_order_lines sol
       WHERE sol.order_id = pn_order_id
-        AND sol.line_id = req.line_id
+        AND sol.line_id = NULLIF(item->>'line_id', '')::bigint
     )
   ) THEN
     RAISE EXCEPTION 'Una o más líneas no pertenecen a la orden de venta %', pn_order_id;
@@ -570,8 +490,6 @@ BEGIN
     RAISE EXCEPTION 'La orden de venta % no tiene cantidades pendientes por facturar', pn_order_id;
   END IF;
 
-  -- tax_id es obligatorio y no tiene secuencia/default en la BD actual.
-  -- El bloqueo transaccional evita que dos facturas asignen el mismo id.
   PERFORM pg_advisory_xact_lock(hashtext('account_move_taxes.tax_id'));
 
   INSERT INTO public.account_move_taxes (
@@ -666,20 +584,4 @@ EXCEPTION
 END;
 $function$;
 
-CREATE OR REPLACE FUNCTION public.fnc_sale_order_confirm_create_move(
-  in_order_id bigint,
-  in_user_id bigint,
-  in_group_id bigint
-)
-RETURNS TABLE(oj_info jsonb, oj_data jsonb)
-LANGUAGE sql
-AS $function$
-  SELECT result.oj_info, result.oj_data
-  FROM public.fnc_sale_order_create_invoice(
-    in_user_id::integer,
-    in_group_id::integer,
-    '[]'::jsonb,
-    'i'::text,
-    jsonb_build_object('order_id', in_order_id)
-  ) result;
-$function$;
+COMMIT;

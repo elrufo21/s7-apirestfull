@@ -594,25 +594,20 @@ developer_text := pt_config_filters;
         move.*, 
 
         case 
-          when move.state = ' || a || 'D' || a || ' then ' || a || 'Borrador' || a || ' 
-          when move.state = ' || a || 'R' || a || ' then ' || a || 'Registrado' || a || ' 
-          when move.state = ' || a || 'C' || a || ' then ' || a || 'Cancelado' || a || ' 
+          when move.state = ' || a || 'draft' || a || ' then ' || a || 'Borrador' || a || '
+          when move.state = ' || a || 'posted' || a || ' then ' || a || 'Registrado' || a || '
+          when move.state = ' || a || 'cancel' || a || ' then ' || a || 'Cancelado' || a || '
         end state_description,
 
-        (move.state || coalesce(move.payment_state,' || a || a || ')) combined_state,
+        (move.state || ' || a || '__' || a || ' || coalesce(move.payment_state,' || a || a || ')) combined_state,
 
         case 
-          when move.state || coalesce(move.payment_state,' || a || a || ') = ' || a || 'DPE' || a || ' then ' || a || 'Borrador' || a || ' 
-          when move.state || coalesce(move.payment_state,' || a || a || ') = ' || a || 'DPP' || a || ' then ' || a || 'Pago parcial' || a || ' 
-          when move.state || coalesce(move.payment_state,' || a || a || ') = ' || a || 'DPF' || a || ' then ' || a || 'Pagado' || a || ' 
-          
-          when move.state || coalesce(move.payment_state,' || a || a || ') = ' || a || 'RPE' || a || ' then ' || a || 'Pago pendiente' || a || ' 
-          when move.state || coalesce(move.payment_state,' || a || a || ') = ' || a || 'RPP' || a || ' then ' || a || 'Pago parcial' || a || ' 
-          when move.state || coalesce(move.payment_state,' || a || a || ') = ' || a || 'RPF' || a || ' then ' || a || 'Pagado' || a || ' 
-
-          when move.state || coalesce(move.payment_state,' || a || a || ') = ' || a || 'CPE' || a || ' then ' || a || 'Cancelado' || a || ' 
-          when move.state || coalesce(move.payment_state,' || a || a || ') = ' || a || 'CPP' || a || ' then ' || a || 'Cancelado' || a || ' 
-          when move.state || coalesce(move.payment_state,' || a || a || ') = ' || a || 'CPF' || a || ' then ' || a || 'Cancelado' || a || ' 
+          when move.state = ' || a || 'draft' || a || ' then ' || a || 'Borrador' || a || '
+          when move.state = ' || a || 'cancel' || a || ' then ' || a || 'Cancelado' || a || '
+          when move.payment_state = ' || a || 'paid' || a || ' then ' || a || 'Pagado' || a || '
+          when move.payment_state = ' || a || 'partial' || a || ' then ' || a || 'Pago parcial' || a || '
+          when move.payment_state = ' || a || 'reversed' || a || ' then ' || a || 'Revertido' || a || '
+          else ' || a || 'Pago pendiente' || a || '
         end combined_state_description,
 
         dsc_con.full_name partner_name, 
@@ -620,8 +615,8 @@ developer_text := pt_config_filters;
         to_char(move.amount_untaxed, ' || a || '"' || a || ' || ' || 'div.symbol' || ' || ' || a || '" FM999G999G990D00' || a || ') amount_untaxed_in_currency,
         to_char(move.amount_tax, ' || a || '"' || a || ' || ' || 'div.symbol' || ' || ' || a || '" FM999G999G990D00' || a || ') amount_tax_in_currency,
         to_char(move.amount_withtaxed, ' || a || '"' || a || ' || ' || 'div.symbol' || ' || ' || a || '" FM999G999G990D00' || a || ') amount_withtaxed_in_currency,
-        to_char(move.amount_payment, ' || a || '"' || a || ' || ' || 'div.symbol' || ' || ' || a || '" FM999G999G990D00' || a || ') amount_payment_in_currency,
-        to_char(move.amount_residual, ' || a || '"' || a || ' || ' || 'div.symbol' || ' || ' || a || '" FM999G999G990D00' || a || ') amount_residual_in_currency
+        to_char(move.amount_paid, ' || a || '"' || a || ' || ' || 'div.symbol' || ' || ' || a || '" FM999G999G990D00' || a || ') amount_paid_in_currency,
+        to_char(move.amount_to_be_paid, ' || a || '"' || a || ' || ' || 'div.symbol' || ' || ' || a || '" FM999G999G990D00' || a || ') amount_to_be_paid_in_currency
 
         /*
         (div.symbol || ' || a || ' ' || a || ' || move.amount_untaxed::text) amount_untaxed_in_currency,
@@ -766,9 +761,9 @@ developer_text := pt_config_filters;
         (fnc_config_tools(it_plot_1 => 'query_columns', ij_1 => 
         '[
           ["CASE_WHEN", "edi_sent_description", "edi_sent", [["U","No enviado"],["S","Enviado"]]],
-          ["CASE_WHEN", "edi_state_description", "edi_state", [["P","Pendiente"],["E","Error"],["S","Éxito"]]],
-          ["CASE_WHEN", "payment_state_description", "payment_state", [["N","Sin pagar"],["I","En proceso"],["R","Pago parcial"],["P","Pagado"]]],
-          ["CASE_WHEN", "email_sent_description", "email_sent", [["U","Sin enviar"],["S","Enviado"]]]
+          ["CASE_WHEN", "edi_state_description", "edi_state", [["P","Pendiente"],["EE","Error"],["ER","Rechazado"],["S","Éxito"]]],
+          ["CASE_WHEN", "payment_state_description", "payment_state", [["not_paid","Sin pagar"],["partial","Pago parcial"],["paid","Pagado"],["reversed","Revertido"]]],
+          ["CASE_WHEN", "email_sent_description", "email_sent_state", [["unsent","Sin enviar"],["sent","Enviado"]]]
         ]')).ot_1 
         || ') '
         -- Block 3 - end
@@ -847,7 +842,7 @@ developer_text := pt_config_filters;
             )
 
       )
-      order by lin.order_id asc
+      order by lin.position asc
       ) 
       from 
         account_move_lines lin 
@@ -933,7 +928,7 @@ developer_text := pt_config_filters;
         ]')).ot_1 || ' 
 
         )
-        --order by lin.order_id asc
+        --order by lin.position asc
         ) 
         from 
           public.payment_account_move m
@@ -946,30 +941,50 @@ developer_text := pt_config_filters;
       || ') || '
       -- block 1 - end
 
+      -- linked sale orders - start
+      || 'jsonb_build_object('
+      || a || 'stat_orders' || a || ', (
+        select count(distinct sol.order_id)
+        from public.account_move_lines aml
+        inner join public.sale_order_lines sol on sol.line_id = aml.sale_order_line_id
+        where aml.move_id = move.move_id
+      )'
+      || ', ' || a || 'orders' || a || ', (
+        select json_agg(jsonb_build_object(
+          ' || a || 'order_id' || a || ', linked_orders.order_id,
+          ' || a || 'name' || a || ', linked_orders.name,
+          ' || a || 'state' || a || ', linked_orders.state
+        ))
+        from (
+          select distinct sale.order_id, sale.name, sale.state
+          from public.account_move_lines aml
+          inner join public.sale_order_lines sol on sol.line_id = aml.sale_order_line_id
+          inner join public.sale_order sale on sale.order_id = sol.order_id
+          where aml.move_id = move.move_id
+        ) linked_orders
+      )'
+      || ') || '
+      -- linked sale orders - end
+
       -- block additional - start
       || 'jsonb_build_object(' 
 
-      || a || 'combined_state' || a || ', (move.state || coalesce(move.payment_state,' || a || a || '))'
+      || a || 'combined_state' || a || ', (move.state || ' || a || '__' || a || ' || coalesce(move.payment_state,' || a || a || '))'
 
       || ', ' || a || 'combined_state_description' || a || ', (
       case 
-        when move.state || coalesce(move.payment_state,' || a || a || ') = ' || a || 'DPE' || a || ' then ' || a || 'Borrador' || a || ' 
-        when move.state || coalesce(move.payment_state,' || a || a || ') = ' || a || 'DPP' || a || ' then ' || a || 'Pago parcial' || a || ' 
-        when move.state || coalesce(move.payment_state,' || a || a || ') = ' || a || 'DPF' || a || ' then ' || a || 'Pagado' || a || ' 
-        
-        when move.state || coalesce(move.payment_state,' || a || a || ') = ' || a || 'RPE' || a || ' then ' || a || 'Pago pendiente' || a || ' 
-        when move.state || coalesce(move.payment_state,' || a || a || ') = ' || a || 'RPP' || a || ' then ' || a || 'Pago parcial' || a || ' 
-        when move.state || coalesce(move.payment_state,' || a || a || ') = ' || a || 'RPF' || a || ' then ' || a || 'Pagado' || a || ' 
-
-        when move.state || coalesce(move.payment_state,' || a || a || ') = ' || a || 'CPE' || a || ' then ' || a || 'Cancelado' || a || ' 
-        when move.state || coalesce(move.payment_state,' || a || a || ') = ' || a || 'CPP' || a || ' then ' || a || 'Cancelado' || a || ' 
-        when move.state || coalesce(move.payment_state,' || a || a || ') = ' || a || 'CPF' || a || ' then ' || a || 'Cancelado' || a || ' 
+        when move.state = ' || a || 'draft' || a || ' then ' || a || 'Borrador' || a || '
+        when move.state = ' || a || 'cancel' || a || ' then ' || a || 'Cancelado' || a || '
+        when move.payment_state = ' || a || 'paid' || a || ' then ' || a || 'Pagado' || a || '
+        when move.payment_state = ' || a || 'partial' || a || ' then ' || a || 'Pago parcial' || a || '
+        when move.payment_state = ' || a || 'reversed' || a || ' then ' || a || 'Revertido' || a || '
+        else ' || a || 'Pago pendiente' || a || '
       end 
       )'
 
       || ', ' || a || 'residual_payments' || a || ', (
       case 
-        when move.payment_state = ' || a || 'PE' || a || ' or move.payment_state = ' || a || 'PP' || a || 'then ' 
+        when move.payment_state = ' || a || 'not_paid' || a || ' or move.payment_state = ' || a || 'partial' || a || ' then '
         || '(' ||
 
         'select json_agg(jsonb_build_object(' ||
@@ -980,7 +995,7 @@ developer_text := pt_config_filters;
 
         ' 
         )
-        --order by lin.order_id asc
+        --order by lin.position asc
         ) 
         from 
         public.payment p
@@ -1044,7 +1059,7 @@ developer_text := pt_config_filters;
             )
 
       )
-      order by lin.order_id asc
+      order by lin.position asc
       ) 
       from 
         account_move_lines lin 
@@ -1068,7 +1083,7 @@ developer_text := pt_config_filters;
       ]')).ot_1 || ' 
 
       )
-      --order by lin.order_id asc
+      --order by lin.position asc
       ) 
       from 
         public.account_move_taxes tax
@@ -1131,7 +1146,7 @@ developer_text := pt_config_filters;
 
       left join public.journal jou on jou.journal_id = move.journal_id
       left join public.document_type doc on doc.document_type_id = move.document_type_id
-      left join public.electronic_catalog_lines ele on (ele.line_id = move.edi_operation_id and ele.catalog_code = ' || a || '51' || a || ')
+      left join public.edi_c51 ele on ele.edi_c51_id = move.edi_c51_id
 
     where 
       move.move_id = ' || pn_row_id;

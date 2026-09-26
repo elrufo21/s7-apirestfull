@@ -469,21 +469,13 @@ BEGIN
     SELECT
       sol.*,
       GREATEST(
-        COALESCE(
-          sol.invoiced_residual,
-          COALESCE(sol.quantity, 0) - COALESCE(sol.invoiced_total, 0),
-          sol.quantity
-        ),
+        COALESCE(sol.quantity, 0) - COALESCE(sol.invoiced_total, 0),
         0
       ) AS quantity_residual,
       CASE
         WHEN pb_has_invoice_lines THEN COALESCE(req.quantity_to_invoice, 0)
         ELSE GREATEST(
-          COALESCE(
-            sol.invoiced_residual,
-            COALESCE(sol.quantity, 0) - COALESCE(sol.invoiced_total, 0),
-            sol.quantity
-          ),
+          COALESCE(sol.quantity, 0) - COALESCE(sol.invoiced_total, 0),
           0
         )
       END AS quantity_to_invoice
@@ -492,11 +484,7 @@ BEGIN
       ON req.line_id = sol.line_id
     WHERE sol.order_id = pn_order_id
       AND GREATEST(
-        COALESCE(
-          sol.invoiced_residual,
-          COALESCE(sol.quantity, 0) - COALESCE(sol.invoiced_total, 0),
-          sol.quantity
-        ),
+        COALESCE(sol.quantity, 0) - COALESCE(sol.invoiced_total, 0),
         0
       ) > 0
       AND (
@@ -531,7 +519,7 @@ BEGIN
     INSERT INTO public.account_move_lines (
       sale_order_line_id,
       move_id,
-      order_id,
+      position,
       product_id,
       label,
       quantity,

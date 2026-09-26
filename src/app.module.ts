@@ -11,6 +11,8 @@ import { EmailModule } from './email/email.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { FilesModule } from './files/files.module';
 import { SaleOrdersModule } from './sale-orders/sale-orders.module';
+import { UsersModule } from './users/users.module';
+import { ApisPeruModule } from './apisperu/apisperu.module';
 
 const appEnv = process.env.APP_ENV ?? process.env.NODE_ENV;
 const envFilePath = appEnv ? [`.env.${appEnv}`, '.env'] : '.env';
@@ -29,10 +31,12 @@ const envFilePath = appEnv ? [`.env.${appEnv}`, '.env'] : '.env';
     TenantDatabaseModule,
     UserDataModule,
     SunatModule,
+    ApisPeruModule,
     EmailModule,
     RealtimeModule,
     FilesModule,
     SaleOrdersModule,
+    UsersModule,
   ],
 })
 export class AppModule {}

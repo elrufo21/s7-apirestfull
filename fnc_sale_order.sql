@@ -173,7 +173,6 @@ declare
                                         {
                                         "schema": "public",
                                         "table": "sale_order_lines_taxes",
-                                        "column_id": "line_tax_id",
                                         "in_jsonb": "order_lines_taxes"
                                         }
                                       ]
@@ -611,29 +610,20 @@ begin
           when ord.state = ' || a || 'C' || a || ' then ' || a || 'Cancelado' || a || ' 
         end state_description,
 
-        (ord.state || coalesce(ord.payment_state,' || a || a || ')) combined_state,
+        ord.state combined_state,
 
-        case 
-          when ord.state || coalesce(ord.payment_state,' || a || a || ') = ' || a || 'DPE' || a || ' then ' || a || 'Borrador' || a || ' 
-          when ord.state || coalesce(ord.payment_state,' || a || a || ') = ' || a || 'DPP' || a || ' then ' || a || 'Pago parcial' || a || ' 
-          when ord.state || coalesce(ord.payment_state,' || a || a || ') = ' || a || 'DPF' || a || ' then ' || a || 'Pagado' || a || ' 
-          
-          when ord.state || coalesce(ord.payment_state,' || a || a || ') = ' || a || 'RPE' || a || ' then ' || a || 'Pago pendiente' || a || ' 
-          when ord.state || coalesce(ord.payment_state,' || a || a || ') = ' || a || 'RPP' || a || ' then ' || a || 'Pago parcial' || a || ' 
-          when ord.state || coalesce(ord.payment_state,' || a || a || ') = ' || a || 'RPF' || a || ' then ' || a || 'Pagado' || a || ' 
-
-          when ord.state || coalesce(ord.payment_state,' || a || a || ') = ' || a || 'CPE' || a || ' then ' || a || 'Cancelado' || a || ' 
-          when ord.state || coalesce(ord.payment_state,' || a || a || ') = ' || a || 'CPP' || a || ' then ' || a || 'Cancelado' || a || ' 
-          when ord.state || coalesce(ord.payment_state,' || a || a || ') = ' || a || 'CPF' || a || ' then ' || a || 'Cancelado' || a || ' 
+        case
+          when ord.state = ' || a || 'D' || a || ' then ' || a || 'Cotización' || a || '
+          when ord.state = ' || a || 'S' || a || ' then ' || a || 'Cotización enviada' || a || '
+          when ord.state = ' || a || 'R' || a || ' then ' || a || 'Orden de venta' || a || '
+          when ord.state = ' || a || 'C' || a || ' then ' || a || 'Cancelado' || a || '
         end combined_state_description,
 
         dsc_con.full_name partner_name, 
         
         to_char(ord.amount_subtotal, ' || a || '"' || a || ' || ' || 'div.symbol' || ' || ' || a || '" FM999G999G990D00' || a || ') amount_subtotal_in_currency,
         to_char(ord.amount_tax, ' || a || '"' || a || ' || ' || 'div.symbol' || ' || ' || a || '" FM999G999G990D00' || a || ') amount_tax_in_currency,
-        to_char(ord.amount_total, ' || a || '"' || a || ' || ' || 'div.symbol' || ' || ' || a || '" FM999G999G990D00' || a || ') amount_total_in_currency,
-        to_char(ord.amount_payment, ' || a || '"' || a || ' || ' || 'div.symbol' || ' || ' || a || '" FM999G999G990D00' || a || ') amount_payment_in_currency,
-        to_char(ord.amount_pending, ' || a || '"' || a || ' || ' || 'div.symbol' || ' || ' || a || '" FM999G999G990D00' || a || ') amount_pending_in_currency
+        to_char(ord.amount_total, ' || a || '"' || a || ' || ' || 'div.symbol' || ' || ' || a || '" FM999G999G990D00' || a || ') amount_total_in_currency
 
         /*
         con_cia.name company_name, 
@@ -739,49 +729,8 @@ begin
     end if;
 
     if pb_extract_final_data = true then
-
-      -- final data - start
-      pt_sql := '
-      select
-        json_agg('
-        
-        -- block 1 - start
-        || 'jsonb_build_object(' || 
-
-        (fnc_config_tools(it_plot_1 => 'query_all_columns|' || '' || '|' || tmp_data || '|' || 'ord', ij_1 => '["combined_state","combined_state_description"]')).ot_1 
-      
-        || ') || '
-        -- Block 1 - end
-
-        -- block 2 - start
-        || 'jsonb_build_object(' || 
-
-        (fnc_config_tools(it_plot_1 => 'query_columns', ij_1 => 
-        '[
-          ["combined_state", "ord.combined_state"],
-          ["combined_state_description", "ord.combined_state_description"]
-        ]')).ot_1 
-      
-        || ') || '
-        -- Block 2 - end
-
-        -- Block 3 - start
-        || 'jsonb_build_object(' || 
-        (fnc_config_tools(it_plot_1 => 'query_columns', ij_1 => 
-        '[
-          ["CASE_WHEN", "edi_sent_description", "edi_sent", [["U","No enviado"],["S","Enviado"]]],
-          ["CASE_WHEN", "edi_state_description", "edi_state", [["P","Pendiente"],["E","Error"],["S","Éxito"]]],
-          ["CASE_WHEN", "payment_state_description", "payment_state", [["N","Sin pagar"],["I","En proceso"],["R","Pago parcial"],["P","Pagado"]]],
-          ["CASE_WHEN", "email_sent_description", "email_sent", [["U","Sin enviar"],["S","Enviado"]]]
-        ]')).ot_1 
-        || ') '
-        -- Block 3 - end
-
-        || ') 
-      from ' || tmp_data || ' ord';
+      pt_sql := 'select jsonb_agg(to_jsonb(ord)) from ' || tmp_data || ' ord';
       execute pt_sql into oj_data;
-      -- final data - end
-    
     end if;
 
     oj_info := fnc_config_message(pn_code, developer_text, developer_jsonb, pn_base_table_count);
@@ -897,7 +846,7 @@ begin
       inner join public.sale_order_lines sol on sol.line_id = aml.sale_order_line_id
       where sol.order_id = pn_row_id
         and move.group_id = in_group_id
-        and move.type = 'C'
+        and move.type in ('out_invoice', 'C')
     );
     -- statistics: end
 
@@ -920,11 +869,8 @@ begin
           '[
             ["partner_name", "dsc_con.full_name"],
             ["currency_name", "div.name"],
-            ["payment_term_name", "cdp.name"],
-            ["journal_name", "jou.name"]
+            ["payment_term_name", "cdp.name"]
           ]')).ot_1 
-        || ', ' || a || 'document_type_name' || a || ', (' || a || '(' || a || ' || doc.code || ' || a ||  ') ' || a || ' || doc.name)'
-        || ', ' || a || 'c51_name' || a || ', (' || a || '[' || a || ' || ele.code || ' || a || '] ' || a || ' || ele.description)'
 
         -- display_name: texto visual, separado del valor real almacenado en name
         || ', ' || a || 'display_name' || a || ', (
@@ -981,7 +927,7 @@ begin
           inner join public.sale_order_lines sol on sol.line_id = aml.sale_order_line_id
           where sol.order_id = ord.order_id
             and move.group_id = ord.group_id
-            and move.type = ' || a || 'C' || a || '
+            and move.type in (' || a || 'out_invoice' || a || ', ' || a || 'C' || a || ')
         ) inv
         )'
 
@@ -991,51 +937,14 @@ begin
       -- block additional - start
       || 'jsonb_build_object(' 
 
-      || a || 'combined_state' || a || ', (ord.state || coalesce(ord.payment_state,' || a || a || '))'
+      || a || 'combined_state' || a || ', ord.state'
 
       || ', ' || a || 'combined_state_description' || a || ', (
-      case 
-        when ord.state || coalesce(ord.payment_state,' || a || a || ') = ' || a || 'DPE' || a || ' then ' || a || 'Borrador' || a || ' 
-        when ord.state || coalesce(ord.payment_state,' || a || a || ') = ' || a || 'DPP' || a || ' then ' || a || 'Pago parcial' || a || ' 
-        when ord.state || coalesce(ord.payment_state,' || a || a || ') = ' || a || 'DPF' || a || ' then ' || a || 'Pagado' || a || ' 
-        
-        when ord.state || coalesce(ord.payment_state,' || a || a || ') = ' || a || 'RPE' || a || ' then ' || a || 'Pago pendiente' || a || ' 
-        when ord.state || coalesce(ord.payment_state,' || a || a || ') = ' || a || 'RPP' || a || ' then ' || a || 'Pago parcial' || a || ' 
-        when ord.state || coalesce(ord.payment_state,' || a || a || ') = ' || a || 'RPF' || a || ' then ' || a || 'Pagado' || a || ' 
-
-        when ord.state || coalesce(ord.payment_state,' || a || a || ') = ' || a || 'CPE' || a || ' then ' || a || 'Cancelado' || a || ' 
-        when ord.state || coalesce(ord.payment_state,' || a || a || ') = ' || a || 'CPP' || a || ' then ' || a || 'Cancelado' || a || ' 
-        when ord.state || coalesce(ord.payment_state,' || a || a || ') = ' || a || 'CPF' || a || ' then ' || a || 'Cancelado' || a || ' 
-      end 
-      )'
-
-      -- residual_payments: la tabla "payment" conserva sus columnas originales (amount_residual),
-      -- NO se cambia a amount_pending (esa columna pertenece a sale_order, no a payment).
-      || ', ' || a || 'residual_payments' || a || ', (
-      case 
-        when ord.payment_state = ' || a || 'PE' || a || ' or ord.payment_state = ' || a || 'PP' || a || 'then ' 
-        || '(' ||
-
-        'select json_agg(jsonb_build_object(' ||
-
-        (fnc_config_tools(it_plot_1 => 'query_all_columns|' || 'public' || '|' || 'payment' || '|' || 'p')).ot_1 
-        
-        || ',' || a || 'amount_residual_in_currency' || a || ', (div.symbol || ' || a || ' ' || a || ' || p.amount_residual::text)' || 
-
-        ' 
-        )
-        --order by lin.order_id asc
-        ) 
-        from 
-        public.payment p
-        inner join currency div on div.currency_id = p.currency_id
-        where 
-          p.partner_id = ord.customer_id 
-          and p.amount_residual > 0
-        )' 
-      || ' 
-      else
-        null
+      case
+        when ord.state = ' || a || 'D' || a || ' then ' || a || 'Cotización' || a || '
+        when ord.state = ' || a || 'S' || a || ' then ' || a || 'Cotización enviada' || a || '
+        when ord.state = ' || a || 'R' || a || ' then ' || a || 'Orden de venta' || a || '
+        when ord.state = ' || a || 'C' || a || ' then ' || a || 'Cancelado' || a || '
       end
       )'
 
@@ -1176,10 +1085,6 @@ begin
       left join currency div on div.currency_id = ord.currency_id 
       left join payment_term cdp on cdp.payment_term_id = ord.payment_term_id
 
-      left join public.journal jou on jou.journal_id = ord.journal_id
-      left join public.document_type doc on doc.document_type_id = ord.document_type_id
-      left join public.electronic_catalog_lines ele on (ele.line_id = ord.edi_operation_id and ele.catalog_code = ' || a || '51' || a || ')
-
     where 
       ord.order_id = ' || pn_row_id;
     execute pt_sql into oj_data;
@@ -1212,9 +1117,9 @@ begin
 	                    'invoiced_total',
 	                    coalesce(nullif(line->>'invoiced_total', '')::double precision, 0),
 	                    'invoiced_residual',
-	                    coalesce(
-	                      nullif(line->>'invoiced_residual', '')::double precision,
-	                      nullif(line->>'quantity', '')::double precision,
+	                    greatest(
+	                      coalesce(nullif(line->>'quantity', '')::double precision, 0) -
+	                      coalesce(nullif(line->>'invoiced_total', '')::double precision, 0),
 	                      0
 	                    )
 	                  )
@@ -1261,6 +1166,21 @@ begin
         end;
 
         if pn_audit_order_id is not null then
+          update public.sale_order ord
+          set billing_state = (
+            select
+              case
+                when coalesce(sum(sol.quantity), 0) = 0 then 'N'
+                when coalesce(sum(sol.invoiced_total), 0) = 0 then 'P'
+                when coalesce(sum(sol.invoiced_residual), 0) = 0 then 'F'
+                else 'E'
+              end
+            from public.sale_order_lines sol
+            where sol.order_id = ord.order_id
+          )
+          where ord.order_id = pn_audit_order_id
+            and ord.state = 'R';
+
           perform *
           from public.fnc_sale_order_audit_insert(
             in_group_id::bigint,

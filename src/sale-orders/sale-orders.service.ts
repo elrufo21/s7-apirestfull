@@ -129,7 +129,7 @@ export class SaleOrdersService {
               ON aml.move_id = c.move_id
             LEFT JOIN public.sale_order_lines sol
               ON sol.order_id = c.order_id
-             AND sol.sequence = aml.order_id
+             AND sol.sequence = aml.position
             LEFT JOIN public.sale_order_lines_taxes solt
               ON solt.line_id = sol.line_id
             LEFT JOIN public.sale_order_taxes sot

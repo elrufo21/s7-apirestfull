@@ -11,6 +11,32 @@ import { RealtimeService } from '../realtime/realtime.service';
 
 const READ_ACTIONS = new Set(['s', 's1', 's2', 's3', 's4', 's_pos']);
 
+export function getDefaultProductImage(files: unknown): unknown | null {
+  if (!Array.isArray(files) || files.length === 0) {
+    return null;
+  }
+
+  const hasExplicitDefault = files.some(
+    (file) =>
+      file &&
+      typeof file === 'object' &&
+      typeof (file as Record<string, unknown>).isDefault === 'boolean',
+  );
+
+  if (!hasExplicitDefault) {
+    return files[0];
+  }
+
+  return (
+    files.find(
+      (file) =>
+        file &&
+        typeof file === 'object' &&
+        (file as Record<string, unknown>).isDefault === true,
+    ) ?? null
+  );
+}
+
 @Injectable()
 export class ExecutorService {
   private readonly logger = new Logger(ExecutorService.name);
@@ -80,7 +106,69 @@ export class ExecutorService {
       });
     }
 
+    if (
+      dto.functionName === 'fnc_product_template' &&
+      !READ_ACTIONS.has(action)
+    ) {
+      await this.syncProductDefaultImageIfNeeded({
+        database,
+        data,
+        groupId,
+        rows,
+      });
+    }
+
     return rows;
+  }
+
+  private async syncProductDefaultImageIfNeeded({
+    database,
+    data,
+    groupId,
+    rows,
+  }: {
+    database: string;
+    data: unknown;
+    groupId: number;
+    rows: Array<Record<string, unknown>>;
+  }) {
+    if (
+      !this.wasExecutionSuccessful(rows) ||
+      !data ||
+      typeof data !== 'object' ||
+      Array.isArray(data) ||
+      !Object.prototype.hasOwnProperty.call(data, 'files')
+    ) {
+      return;
+    }
+
+    const productTemplateId = this.toPositiveNumber(
+      this.getObjectValue(data, 'product_template_id') ??
+        this.getResponseValue(rows, 'oj_data', 'product_template_id'),
+    );
+
+    if (!productTemplateId) {
+      return;
+    }
+
+    const defaultImage = getDefaultProductImage(
+      this.getObjectValue(data, 'files'),
+    );
+
+    await this.tenantDatabaseService.query(
+      database,
+      `
+        UPDATE public.product
+        SET files = $1::jsonb
+        WHERE product_template_id = $2
+          AND group_id = $3
+      `,
+      [
+        defaultImage ? JSON.stringify([defaultImage]) : null,
+        productTemplateId,
+        groupId,
+      ],
+    );
   }
 
   private async syncSaleOrderInvoicedTotalsIfNeeded({
