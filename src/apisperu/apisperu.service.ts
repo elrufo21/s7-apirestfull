@@ -96,10 +96,20 @@ export class ApisPeruService {
       rawInput?.document_number ||
       cabecera?.id ||
       '';
-    const match = String(docName).match(/^([FB]\w{3})-?(\d+)$/i);
+    const rawName = String(docName || '').trim();
+    const rawDocNumber = String(rawInput?.document_number || '').trim();
+    const match = rawName.match(/^([FB]\w{3})(?:[\/\s-](?:\d{4}[\/\s-])?)?(\d+)$/i);
     const prefix = isBoleta ? 'B' : 'F';
-    const serie = match ? `${match[1].toUpperCase()}` : `${prefix}001`;
-    const correlativo = match ? match[2] : String(rawInput?.move_id || '1');
+    let serie = match ? `${match[1].toUpperCase()}` : `${prefix}001`;
+    if (isBoleta && serie.startsWith('F')) {
+      serie = `B${serie.slice(1)}`;
+    } else if (!isBoleta && serie.startsWith('B')) {
+      serie = `F${serie.slice(1)}`;
+    }
+    const correlativoRaw = match
+      ? match[2]
+      : rawDocNumber || String(rawInput?.move_id || '1');
+    const correlativo = String(parseInt(correlativoRaw, 10) || 1);
 
     // 2. Fechas
     const rawDate =
@@ -136,11 +146,11 @@ export class ApisPeruService {
 
     // 4. Datos del Emisor
     const emisorRuc =
-      String(emisor?.ruc || process.env.SUNAT_TEST_RUC || '20000000001').trim();
+      String(emisor?.ruc || process.env.SUNAT_TEST_RUC || '20603390033').trim();
     const emisorRazonSocial =
-      emisor?.razonSocial || 'EMPRESA EMISORA S.A.C.';
+      emisor?.razonSocial || 'DESTINO AVENTURA PERÚ EMPRESA INDIVIDUAL DE RESPONSABILIDAD LIMITADA';
     const emisorNombreComercial =
-      emisor?.nombreComercial || emisorRazonSocial;
+      emisor?.nombreComercial || 'DESTINO AVENTURA PERÚ';
     const emisorAddress = emisor?.address || {};
 
     // 5. Datos del Cliente

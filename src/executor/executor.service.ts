@@ -11,6 +11,27 @@ import { RealtimeService } from '../realtime/realtime.service';
 
 const READ_ACTIONS = new Set(['s', 's1', 's2', 's3', 's4', 's_pos']);
 
+export function getPaymentInvoiceLinkInput(
+  data: unknown,
+  rows: Array<Record<string, unknown>>,
+) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return null;
+  }
+
+  const paymentId = Number(
+    (rows[0]?.oj_data as Record<string, unknown> | undefined)?.payment_id,
+  );
+  const moveId = Number((data as Record<string, unknown>).move_id);
+  const amount = Number((data as Record<string, unknown>).amount);
+
+  if (![paymentId, moveId, amount].every((value) => Number.isFinite(value) && value > 0)) {
+    return null;
+  }
+
+  return { paymentId, moveId, amount };
+}
+
 export function getDefaultProductImage(files: unknown): unknown | null {
   if (!Array.isArray(files) || files.length === 0) {
     return null;
@@ -68,27 +89,29 @@ export class ExecutorService {
       );
     }
 
+    const sql = `
+      SELECT *
+      FROM public.fnc_execute(
+        $1::text,
+        $2::integer,
+        $3::integer,
+        $4::jsonb,
+        $5::text,
+        $6::jsonb
+      )
+    `;
+    const parameters = [
+      dto.functionName,
+      userId,
+      groupId,
+      JSON.stringify(companies),
+      action,
+      JSON.stringify(data),
+    ];
     const rows = await this.tenantDatabaseService.query(
       database,
-      `
-        SELECT *
-        FROM public.fnc_execute(
-          $1::text,
-          $2::integer,
-          $3::integer,
-          $4::jsonb,
-          $5::text,
-          $6::jsonb
-        )
-      `,
-      [
-        dto.functionName,
-        userId,
-        groupId,
-        JSON.stringify(companies),
-        action,
-        JSON.stringify(data),
-      ],
+      sql,
+      parameters,
     );
 
     if (dto.functionName === 'fnc_account_move' && !READ_ACTIONS.has(action)) {
@@ -170,6 +193,7 @@ export class ExecutorService {
       ],
     );
   }
+
 
   private async syncSaleOrderInvoicedTotalsIfNeeded({
     database,
