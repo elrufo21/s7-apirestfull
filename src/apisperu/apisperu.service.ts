@@ -268,21 +268,26 @@ export class ApisPeruService {
 
     // 7. Totales
     const rawOverrides = rawInput?.overrides || {};
+    const toNum = (val: any, fallback = 0) => {
+      const n = Number(val);
+      return Number.isFinite(n) ? n : fallback;
+    };
+
     const mtoOperGravadas = Number(
-      (rawInput?.amount_untaxed ?? rawOverrides?.legalMonetaryTotal?.lineExtensionAmount ?? sumGravadas).toFixed(2),
+      toNum(rawInput?.amount_untaxed ?? rawOverrides?.legalMonetaryTotal?.lineExtensionAmount ?? sumGravadas).toFixed(2),
     );
     const mtoIGV = Number(
-      (rawInput?.amount_tax ?? rawOverrides?.taxTotal?.taxAmount ?? sumIgv).toFixed(2),
+      toNum(rawInput?.amount_tax ?? rawOverrides?.taxTotal?.taxAmount ?? sumIgv).toFixed(2),
     );
     const totalImpuestos = mtoIGV;
     const valorVenta = Number(
       (mtoOperGravadas + sumExoneradas + sumInafectas).toFixed(2),
     );
     const mtoImpVenta = Number(
-      (
+      toNum(
         rawInput?.amount_withtaxed ??
         rawOverrides?.legalMonetaryTotal?.payableAmount ??
-        (valorVenta + totalImpuestos)
+        (valorVenta + totalImpuestos),
       ).toFixed(2),
     );
 
