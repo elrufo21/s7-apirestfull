@@ -201,14 +201,22 @@ export class ApisPeruService {
       .filter((l: any) => l.type === 'L' || !l.type)
       .map((line: any, idx: number) => {
         const qty = Math.max(0.0001, Number(line.quantity || line.cantidad || 1));
-        const priceUnit = Number(line.price_unit || line.mtoValorUnitario || 0);
+        const priceUnit = Number(
+          line.price_unit ||
+          line.mtoValorUnitario ||
+          line.price?.amount ||
+          (line.pricingReference?.priceAmount ? Number(line.pricingReference.priceAmount) / 1.18 : 0) ||
+          0,
+        );
         const valorVenta = Number(
+          line.lineExtensionAmount ??
           line.amount_untaxed_total ??
           line.amount_untaxed ??
           line.mtoValorVenta ??
           (priceUnit * qty),
         );
         const igv = Number(
+          line.taxTotal?.taxAmount ??
           line.amount_tax_total ??
           line.amount_tax ??
           line.igv ??
@@ -216,14 +224,16 @@ export class ApisPeruService {
         );
 
         // Identificar porcentaje de IGV y tipo de afectación
+        const subtotalTaxReason = line.taxTotal?.subtotals?.[0]?.taxCategory?.taxExemptionReasonCode;
         const taxPercent = Number(
           line.move_lines_taxes?.[0]?.percentage ??
           line.porcentajeIgv ??
-          (igv > 0 ? 18 : 0),
+          (igv > 0 || subtotalTaxReason === '10' ? 18 : 0),
         );
 
         const tipAfeIgv = String(
           line.tipAfeIgv ||
+          subtotalTaxReason ||
           (taxPercent > 0 ? '10' : '20'),
         );
 
@@ -241,9 +251,9 @@ export class ApisPeruService {
         const mtoPrecioUnitario = Number((totalItem / qty).toFixed(2));
 
         return {
-          codProducto: String(line.product_id || line.codProducto || `ITEM-${idx + 1}`),
+          codProducto: String(line.item?.sellersItemId || line.product_id || line.codProducto || `ITEM-${idx + 1}`),
           unidad: line.uom_name === 'Unidades' ? 'NIU' : (line.uom_name || line.unitCode || 'NIU'),
-          descripcion: line.name || line.description || line.descripcion || 'PRODUCTO/SERVICIO',
+          descripcion: line.item?.description || line.name || line.description || line.descripcion || 'PRODUCTO/SERVICIO',
           cantidad: Number(qty.toFixed(4)),
           mtoValorUnitario: Number(priceUnit.toFixed(2)),
           mtoValorVenta: Number(valorVenta.toFixed(2)),
@@ -257,18 +267,23 @@ export class ApisPeruService {
       });
 
     // 7. Totales
+    const rawOverrides = rawInput?.overrides || {};
     const mtoOperGravadas = Number(
-      (rawInput?.amount_untaxed ?? sumGravadas).toFixed(2),
+      (rawInput?.amount_untaxed ?? rawOverrides?.legalMonetaryTotal?.lineExtensionAmount ?? sumGravadas).toFixed(2),
     );
     const mtoIGV = Number(
-      (rawInput?.amount_tax ?? sumIgv).toFixed(2),
+      (rawInput?.amount_tax ?? rawOverrides?.taxTotal?.taxAmount ?? sumIgv).toFixed(2),
     );
     const totalImpuestos = mtoIGV;
     const valorVenta = Number(
       (mtoOperGravadas + sumExoneradas + sumInafectas).toFixed(2),
     );
     const mtoImpVenta = Number(
-      (rawInput?.amount_withtaxed ?? (valorVenta + totalImpuestos)).toFixed(2),
+      (
+        rawInput?.amount_withtaxed ??
+        rawOverrides?.legalMonetaryTotal?.payableAmount ??
+        (valorVenta + totalImpuestos)
+      ).toFixed(2),
     );
 
     // 8. Forma de Pago
