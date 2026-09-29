@@ -89,6 +89,72 @@ export class ExecutorService {
       );
     }
 
+    // Soporte directo para funciones RPC standalone de persistencia EDI
+    if (dto.functionName === 'fnc_account_move_update_edi') {
+      const payload = Array.isArray(data) ? data[0] : (data || {});
+      const moveId = payload?.in_move_id || payload?.move_id;
+      const xmlReq = payload?.it_edi_xml_request || payload?.edi_xml_request || '';
+      const xmlRes = payload?.it_edi_xml_response || payload?.edi_xml_response || '';
+      const ediState = payload?.it_edi_state || payload?.edi_state || 'S';
+      const ediCode = String(payload?.it_edi_code ?? payload?.edi_code ?? '0');
+      const ediMessage = String(payload?.it_edi_message ?? payload?.edi_message ?? '');
+
+      const ediSql = `
+        SELECT * FROM public.fnc_account_move_update_edi(
+          $1::bigint,
+          $2::text,
+          $3::text,
+          $4::text,
+          $5::text,
+          $6::text
+        )
+      `;
+      const rows = await this.tenantDatabaseService.query(
+        database,
+        ediSql,
+        [moveId, xmlReq, xmlRes, ediState, ediCode, ediMessage],
+      );
+
+      this.realtimeService.broadcast({
+        type: 'invoice.changed',
+        payload: { action: 'u', moveId, at: new Date().toISOString() },
+      });
+
+      return rows;
+    }
+
+    if (dto.functionName === 'fnc_account_move_audit_insert') {
+      const payload = Array.isArray(data) ? data[0] : (data || {});
+      const groupIdVal = payload?.in_group_id || groupId;
+      const filesVal = JSON.stringify(payload?.ij_files || []);
+      const userIdVal = payload?.in_user_id || userId;
+      const creationDateVal = payload?.id_creation_date || new Date().toISOString();
+      const moveIdVal = payload?.in_move_id || payload?.move_id;
+      const actionIdVal = payload?.it_action_id || 'S1';
+      const ediCodeVal = String(payload?.it_edi_code || '0');
+      const ediMessageVal = String(payload?.it_edi_message || '');
+
+      const auditSql = `
+        SELECT * FROM public.fnc_account_move_audit_insert(
+          $1::bigint,
+          $2::jsonb,
+          $3::bigint,
+          $4::timestamp without time zone,
+          $5::bigint,
+          $6::text,
+          $7::text,
+          $8::text
+        )
+      `;
+      const rows = await this.tenantDatabaseService.query(
+        database,
+        auditSql,
+        [groupIdVal, filesVal, userIdVal, creationDateVal, moveIdVal, actionIdVal, ediCodeVal, ediMessageVal],
+      );
+
+      return rows;
+    }
+
     const sql = `
       SELECT *
       FROM public.fnc_execute(
