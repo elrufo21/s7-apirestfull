@@ -1,5 +1,6 @@
 // @ts-nocheck
 import fs from "fs";
+import path from "path";
 import {
   DeleteObjectCommand,
   PutObjectCommand,
@@ -70,26 +71,24 @@ export async function uploadFileFromDisk(
     throw new Error(`No se encontro el archivo a subir: ${localPath}`);
   }
 
-  const { contentType } = options;
-  const client = getClient();
-  const key = buildKey(fileName, prefix);
-  const putParams = {
-    Bucket: process.env.R2_BUCKET,
-    Key: key,
-    Body: fs.createReadStream(localPath),
-  };
+  const basePath = process.env.STORAGE_PATH || path.join(process.cwd(), "storage");
+  const cleanPrefix = (prefix || "").replace(/^[\\/]+/, "").replace(/[\\/]+$/, "");
+  const targetDir = cleanPrefix ? path.join(basePath, cleanPrefix) : basePath;
 
-  if (contentType) {
-    putParams.ContentType = contentType;
+  if (!fs.existsSync(targetDir)) {
+    fs.mkdirSync(targetDir, { recursive: true });
   }
 
-  await client.send(
-    new PutObjectCommand(putParams)
-  );
+  const targetPath = path.join(targetDir, fileName);
+  fs.copyFileSync(localPath, targetPath);
+
+  const publicPath = `/storage/${cleanPrefix ? cleanPrefix + '/' : ''}${fileName}`;
 
   return {
-    key,
-    url: buildPublicUrl(key),
+    key: publicPath,
+    path: publicPath,
+    url: publicPath,
+    publicUrl: publicPath,
     name: fileName,
     type: "zip",
   };
@@ -98,34 +97,35 @@ export async function uploadFileFromDisk(
 export async function uploadBufferToR2({
   buffer,
   fileName,
-  prefix,
+  prefix = "facturacion/",
   contentType,
 }) {
   if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
-    throw new Error("Buffer invalido para subida a R2");
+    throw new Error("Buffer invalido");
   }
 
   if (!fileName || typeof fileName !== "string") {
-    throw new Error("Nombre de archivo invalido para subida a R2");
+    throw new Error("Nombre de archivo invalido");
   }
 
-  const client = getClient();
-  const key = buildKey(fileName, prefix);
-  const putParams = {
-    Bucket: process.env.R2_BUCKET,
-    Key: key,
-    Body: buffer,
-  };
+  const basePath = process.env.STORAGE_PATH || path.join(process.cwd(), "storage");
+  const cleanPrefix = (prefix || "").replace(/^[\\/]+/, "").replace(/[\\/]+$/, "");
+  const targetDir = cleanPrefix ? path.join(basePath, cleanPrefix) : basePath;
 
-  if (contentType) {
-    putParams.ContentType = contentType;
+  if (!fs.existsSync(targetDir)) {
+    fs.mkdirSync(targetDir, { recursive: true });
   }
 
-  await client.send(new PutObjectCommand(putParams));
+  const targetPath = path.join(targetDir, fileName);
+  fs.writeFileSync(targetPath, buffer);
+
+  const publicPath = `/storage/${cleanPrefix ? cleanPrefix + '/' : ''}${fileName}`;
 
   return {
-    key,
-    url: buildPublicUrl(key),
+    key: publicPath,
+    path: publicPath,
+    url: publicPath,
+    publicUrl: publicPath,
     name: fileName,
     type: contentType || "file",
   };
@@ -161,24 +161,22 @@ export async function deleteObjectFromR2(key) {
     throw new Error("Debes enviar el key del archivo a eliminar");
   }
 
-  const client = getClient();
+  const basePath = process.env.STORAGE_PATH || path.join(process.cwd(), "storage");
+  const cleanKey = key.replace(/^\/?storage\/?/, "");
+  const targetFile = path.join(basePath, cleanKey);
 
-  try {
-    await client.send(
-      new DeleteObjectCommand({
-        Bucket: process.env.R2_BUCKET,
-        Key: key,
-      })
-    );
-
-    return {
-      success: true,
-      message: `Archivo eliminado correctamente: ${key}`,
-    };
-  } catch (error) {
-    console.error("Error eliminando archivo en R2:", error);
-    return { success: false, message: "Error eliminando archivo en R2", error };
+  if (fs.existsSync(targetFile)) {
+    try {
+      fs.unlinkSync(targetFile);
+    } catch (e) {
+      console.warn("No se pudo eliminar archivo local:", e);
+    }
   }
+
+  return {
+    success: true,
+    message: `Archivo eliminado correctamente: ${key}`,
+  };
 }
 
 export const r2Prefixes = {

@@ -4,12 +4,6 @@ import AdmZip from 'adm-zip';
 import fs from 'fs';
 import path from 'path';
 import { unzipCDR } from '../sunat/legacy/unzip.legacy';
-import {
-  uploadFileFromDisk,
-  uploadTwoZipsFromDisk,
-  r2Prefixes,
-} from '../sunat/legacy/r2-storage.legacy';
-import { saveTempZip } from '../sunat/legacy/to-drive-temp.legacy';
 
 function numeroALetras(num: number, moneda = 'SOLES'): string {
   const unidades = ['CERO', 'UNO', 'DOS', 'TRES', 'CUATRO', 'CINCO', 'SEIS', 'SIETE', 'OCHO', 'NUEVE'];
@@ -443,48 +437,91 @@ export class ApisPeruService {
       }
     }
 
-    // Guardar temporalmente los archivos para auditoría R2
+    // Guardar los archivos de facturación en el servidor local (VPS)
     let uploadResult: any = undefined;
-    let requestTempPath: string | undefined;
-    let responseTempPath: string | undefined;
 
     try {
+      const companyId =
+        rawInput?.company_id ||
+        rawInput?.companyId ||
+        rawInput?.group_id ||
+        rawInput?.in_group_id ||
+        rawInput?.company?.company_id ||
+        1;
+
+      const basePath = process.env.STORAGE_PATH ?? path.join(process.cwd(), 'storage');
+      const companyFolder = `company-${companyId}`;
+      const invoicingDir = path.join(basePath, companyFolder, 'facturacion');
+      const xmlDir = path.join(invoicingDir, 'xml');
+      const cdrDir = path.join(invoicingDir, 'cdr');
+
+      if (!fs.existsSync(xmlDir)) {
+        fs.mkdirSync(xmlDir, { recursive: true });
+      }
+      if (!fs.existsSync(cdrDir)) {
+        fs.mkdirSync(cdrDir, { recursive: true });
+      }
+
+      let requestPath = '';
+      let requestName = '';
+      let responsePath = '';
+      let responseName = '';
+
       if (xmlBase64) {
         const xmlBuffer = Buffer.from(xmlBase64, 'base64');
         const zipReq = new AdmZip();
         zipReq.addFile(`${nombre}.xml`, xmlBuffer);
-        requestTempPath = saveTempZip(zipReq.toBuffer(), `request-${nombre}.zip`);
+        requestName = `request-${nombre}.zip`;
+        const localRequestZip = path.join(xmlDir, requestName);
+        fs.writeFileSync(localRequestZip, zipReq.toBuffer());
+        // También guardar el archivo XML plano
+        fs.writeFileSync(path.join(xmlDir, `${nombre}.xml`), xmlBuffer);
+        requestPath = `/storage/${companyFolder}/facturacion/xml/${requestName}`;
       }
 
       if (cdrBase64) {
         const cdrBuffer = Buffer.from(cdrBase64, 'base64');
-        responseTempPath = saveTempZip(cdrBuffer, `response-${nombre}.zip`);
+        responseName = `response-${nombre}.zip`;
+        const localResponseZip = path.join(cdrDir, responseName);
+        fs.writeFileSync(localResponseZip, cdrBuffer);
+        if (cdrParsed?.xmlContent) {
+          fs.writeFileSync(path.join(cdrDir, `R-${nombre}.xml`), cdrParsed.xmlContent, 'utf8');
+        }
+        responsePath = `/storage/${companyFolder}/facturacion/cdr/${responseName}`;
       }
 
-      if (requestTempPath && responseTempPath) {
-        const storageUpload = await uploadTwoZipsFromDisk({
-          requestPath: requestTempPath,
-          requestName: `request-${nombre}.zip`,
-          responsePath: responseTempPath,
-          responseName: `response-${nombre}.zip`,
-        });
-
+      if (requestPath || responsePath) {
         uploadResult = {
           success: true,
-          ...storageUpload,
-          requestTempPath,
-          responseTempPath,
+          request: requestPath
+            ? {
+                id: requestPath,
+                path: requestPath,
+                url: requestPath,
+                publicUrl: requestPath,
+                name: requestName,
+                type: 'application/zip',
+              }
+            : undefined,
+          response: responsePath
+            ? {
+                id: responsePath,
+                path: responsePath,
+                url: responsePath,
+                publicUrl: responsePath,
+                name: responseName,
+                type: 'application/zip',
+              }
+            : undefined,
         };
       }
     } catch (storageErr: any) {
       this.logger.warn(
-        `[ApisPeru] Advertencia guardando en Cloudflare R2: ${storageErr?.message || storageErr}`,
+        `[ApisPeru] Advertencia guardando en almacenamiento local del VPS: ${storageErr?.message || storageErr}`,
       );
       uploadResult = {
         success: false,
-        message: storageErr?.message || 'Error subiendo a R2',
-        requestTempPath,
-        responseTempPath,
+        message: storageErr?.message || 'Error guardando en almacenamiento local del servidor',
       };
     }
 
@@ -533,7 +570,28 @@ export class ApisPeruService {
       },
     );
 
-    return Buffer.from(response.data);
+    const buffer = Buffer.from(response.data);
+
+    try {
+      const companyId =
+        rawInput?.company_id ||
+        rawInput?.companyId ||
+        rawInput?.group_id ||
+        rawInput?.in_group_id ||
+        rawInput?.company?.company_id ||
+        1;
+      const nombre = `${payload.company.ruc}-${payload.tipoDoc}-${payload.serie}-${payload.correlativo}`;
+      const basePath = process.env.STORAGE_PATH ?? path.join(process.cwd(), 'storage');
+      const pdfDir = path.join(basePath, `company-${companyId}`, 'facturacion', 'pdf');
+      if (!fs.existsSync(pdfDir)) {
+        fs.mkdirSync(pdfDir, { recursive: true });
+      }
+      fs.writeFileSync(path.join(pdfDir, `${nombre}.pdf`), buffer);
+    } catch (saveErr) {
+      this.logger.warn(`No se pudo guardar copia local del PDF: ${saveErr}`);
+    }
+
+    return buffer;
   }
 
   /**
