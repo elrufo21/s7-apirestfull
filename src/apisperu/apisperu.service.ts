@@ -144,32 +144,51 @@ export class ApisPeruService {
       cabecera?.profileId ||
       '0101';
 
-    // 4. Datos del Emisor
+    // 4. Datos del Emisor (Garantiza siempre el RUC real de la empresa del token)
+    const rawEmisorRuc = String(emisor?.ruc || '').trim();
     const emisorRuc =
-      String(emisor?.ruc || process.env.SUNAT_TEST_RUC || '20603390033').trim();
+      rawEmisorRuc && rawEmisorRuc !== '20100100100'
+        ? rawEmisorRuc
+        : process.env.APIPERU_COMPANY_RUC || '20603390033';
     const emisorRazonSocial =
-      emisor?.razonSocial || 'DESTINO AVENTURA PERÚ EMPRESA INDIVIDUAL DE RESPONSABILIDAD LIMITADA';
+      emisor?.razonSocial && emisor?.razonSocial !== 'EMPRESA PRUEBA 25'
+        ? emisor.razonSocial
+        : 'DESTINO AVENTURA PERÚ EMPRESA INDIVIDUAL DE RESPONSABILIDAD LIMITADA';
     const emisorNombreComercial =
-      emisor?.nombreComercial || 'DESTINO AVENTURA PERÚ';
+      emisor?.nombreComercial && emisor?.nombreComercial !== 'PRUEBA 25'
+        ? emisor.nombreComercial
+        : 'DESTINO AVENTURA PERÚ';
     const emisorAddress = emisor?.address || {};
 
-    // 5. Datos del Cliente
-    const rawDocType = String(
-      cliente?.documentTypeCode ||
-      cliente?.tipoDoc ||
-      (isBoleta ? '1' : '6'),
-    ).trim();
-    const rawNumDoc = String(
+    // 5. Datos del Cliente (Normaliza DNI, RUC o Clientes Varios)
+    const rawDocCandidate = String(
       cliente?.ruc ||
       cliente?.numDoc ||
       cliente?.identification_number ||
-      (isBoleta ? '00000000' : '20000000002'),
+      rawInput?.partner_vat ||
+      rawInput?.partner_document_number ||
+      ''
     ).trim();
+    const cleanNumDoc = rawDocCandidate.replace(/\D/g, '');
+
+    let rawDocType = '0';
+    let rawNumDoc = '00000000';
+    if (cleanNumDoc.length === 11) {
+      rawDocType = '6';
+      rawNumDoc = cleanNumDoc;
+    } else if (cleanNumDoc.length === 8) {
+      rawDocType = '1';
+      rawNumDoc = cleanNumDoc;
+    } else if (!isBoleta) {
+      rawDocType = '6';
+      rawNumDoc = cleanNumDoc || '20000000002';
+    }
+
     const clientRazonSocial =
       cliente?.razonSocial ||
       cliente?.nombreComercial ||
       rawInput?.partner_name ||
-      (isBoleta ? 'CLIENTES VARIOS' : 'CLIENTE DESTINO S.A.C.');
+      (rawDocType === '0' ? 'CLIENTES VARIOS' : 'CLIENTE');
     const clientAddress = cliente?.address || {};
 
     // 6. Mapeo de Líneas de Detalle
