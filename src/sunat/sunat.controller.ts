@@ -23,8 +23,12 @@ import {
   uploadSunatCertificate,
 } from './legacy/sunat.controller.legacy';
 
+import { ApisPeruService } from '../apisperu/apisperu.service';
+
 @Controller('sunat')
 export class SunatController {
+  constructor(private readonly apisPeruService: ApisPeruService) {}
+
   @Post('factura')
   factura(@Req() req: Request, @Res() res: Response, @Next() next: NextFunction) {
     // Reusa la logica fiscal ya probada del backend Express anterior.
@@ -42,23 +46,55 @@ export class SunatController {
   }
 
   @Post('factura-builder')
-  facturaBuilder(
+  async facturaBuilder(
     @Req() req: Request,
     @Res() res: Response,
     @Next() next: NextFunction,
   ) {
-    // Endpoint usado por el front para facturas electronicas.
-    return enviarFacturaBuilder(req, res, next);
+    try {
+      const customToken = (req.headers['x-apisperu-token'] as string) || undefined;
+      const result = await this.apisPeruService.processInvoice(
+        req.body,
+        false,
+        customToken,
+      );
+      return res.status(200).json(result);
+    } catch (error: any) {
+      const status = error.statusCode || error.status || 500;
+      return res.status(status).json({
+        success: false,
+        flow: 'apisperu_builder',
+        message: error.message || 'Error procesando factura con APIs Perú',
+        ...(error.sunatCode ? { sunatCode: error.sunatCode } : {}),
+        ...(error.details ? { details: error.details } : {}),
+      });
+    }
   }
 
   @Post('boleta-builder')
-  boletaBuilder(
+  async boletaBuilder(
     @Req() req: Request,
     @Res() res: Response,
     @Next() next: NextFunction,
   ) {
-    // Endpoint usado por el front para boletas electronicas.
-    return enviarBoletaBuilder(req, res, next);
+    try {
+      const customToken = (req.headers['x-apisperu-token'] as string) || undefined;
+      const result = await this.apisPeruService.processInvoice(
+        req.body,
+        true,
+        customToken,
+      );
+      return res.status(200).json(result);
+    } catch (error: any) {
+      const status = error.statusCode || error.status || 500;
+      return res.status(status).json({
+        success: false,
+        flow: 'apisperu_builder',
+        message: error.message || 'Error procesando boleta con APIs Perú',
+        ...(error.sunatCode ? { sunatCode: error.sunatCode } : {}),
+        ...(error.details ? { details: error.details } : {}),
+      });
+    }
   }
 
   @Post('nota-credito-builder')
