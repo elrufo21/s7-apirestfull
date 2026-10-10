@@ -1,13 +1,17 @@
 import {
   Body,
   Controller,
+  Get,
+  Param,
   Post,
+  Req,
   UploadedFiles,
   UseInterceptors,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
-import { EmailService } from './email.service';
+import { CompanyMailServerConfig, EmailService } from './email.service';
+import type { Request } from 'express';
 
 @Controller()
 export class EmailController {
@@ -37,5 +41,58 @@ export class EmailController {
   resetPassword(@Body() body: Record<string, unknown>) {
     // Endpoint usado por RecoverPassword para enviar enlace de recuperacion.
     return this.emailService.sendPasswordResetEmail(body);
+  }
+
+  @Get('email/company/:companyId')
+  async getCompanyMailServer(
+    @Param('companyId') companyId: string,
+    @Req() req: Request,
+  ) {
+    const database = (req as any).user?.database;
+    const config = await this.emailService.getCompanyMailServer(
+      database,
+      Number(companyId),
+    );
+    return { success: true, data: config };
+  }
+
+  @Post('email/company/:companyId')
+  async saveCompanyMailServer(
+    @Param('companyId') companyId: string,
+    @Body() body: Partial<CompanyMailServerConfig>,
+    @Req() req: Request,
+  ) {
+    const database = (req as any).user?.database;
+    const config = await this.emailService.saveCompanyMailServer(
+      database,
+      Number(companyId),
+      body,
+    );
+    return {
+      success: true,
+      message: 'Configuración de correo guardada con éxito',
+      data: config,
+    };
+  }
+
+  @Post('email/company/:companyId/test')
+  async testCompanyMailServer(
+    @Param('companyId') companyId: string,
+    @Body()
+    body: {
+      smtp_host: string;
+      smtp_port: number;
+      smtp_secure: boolean;
+      smtp_user: string;
+      smtp_pass: string;
+    },
+    @Req() req: Request,
+  ) {
+    const database = (req as any).user?.database;
+    return this.emailService.testMailServerConnection(
+      body,
+      database,
+      Number(companyId),
+    );
   }
 }
