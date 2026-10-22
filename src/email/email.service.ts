@@ -336,6 +336,49 @@ export class EmailService {
     });
   }
 
+  async sendUserCredentialsEmail(params: {
+    to: string;
+    name: string;
+    password: string;
+    database?: string;
+    companyId?: number;
+  }) {
+    const { to, name, password, database, companyId } = params;
+    const greeting = name ? `Hola ${name},` : 'Hola,';
+
+    const text = `${greeting}\n\n` +
+      `Se ha creado tu cuenta de usuario para acceder al sistema.\n\n` +
+      `Credenciales de acceso:\n` +
+      `- Correo: ${to}\n` +
+      `- Contraseña temporal: ${password}\n\n` +
+      `Te recomendamos ingresar al sistema y cambiar tu contraseña en tu perfil.\n\n` +
+      `Saludos cordiales,\nEquipo de Administración.`;
+
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
+        <h2 style="color: #1e3a8a; margin-top: 0;">Bienvenido(a) al Sistema</h2>
+        <p style="color: #334155; font-size: 15px;">${greeting}</p>
+        <p style="color: #334155; font-size: 14px;">Se ha creado tu cuenta de usuario para acceder al sistema. A continuación encontrarás tus credenciales de acceso:</p>
+        <div style="background-color: #f8fafc; border-left: 4px solid #2563eb; padding: 15px; margin: 20px 0; border-radius: 4px;">
+          <p style="margin: 0 0 10px 0; color: #1e293b; font-size: 14px;"><strong>Usuario / Correo:</strong> <span style="color: #2563eb;">${to}</span></p>
+          <p style="margin: 0; color: #1e293b; font-size: 14px;"><strong>Contraseña temporal:</strong> <span style="font-family: monospace; background-color: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-weight: bold;">${password}</span></p>
+        </div>
+        <p style="color: #64748b; font-size: 13px;">Por seguridad, te sugerimos iniciar sesión y actualizar tu contraseña.</p>
+        <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
+        <p style="color: #94a3b8; font-size: 12px; margin-bottom: 0;">Este es un mensaje automático, por favor no responda directamente a este correo.</p>
+      </div>
+    `;
+
+    return this.sendInvoiceEmail({
+      to,
+      subject: 'Bienvenido - Tus credenciales de acceso al sistema',
+      text,
+      html,
+      database,
+      companyId,
+    });
+  }
+
   private parseUrls(rawUrls: EmailBody['urls']) {
     if (!rawUrls) return [];
     if (Array.isArray(rawUrls)) return rawUrls;

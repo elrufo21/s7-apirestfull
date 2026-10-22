@@ -11,8 +11,8 @@ DECLARE
   v_total_items integer := 0;
   v_zero_invoiced_items integer := 0;
   v_fully_invoiced_items integer := 0;
-  v_order_state varchar(10);
-  v_new_billing_state varchar(10) := 'N';
+  v_order_state varchar(30);
+  v_new_invoice_state varchar(30) := 'nothing';
 BEGIN
   IF p_order_id IS NULL THEN
     RETURN;
@@ -22,20 +22,22 @@ BEGIN
   FROM public.sale_order
   WHERE order_id = p_order_id;
 
-  IF v_order_state IS NULL OR v_order_state IN ('D', 'S', 'C', 'draft', 'cancel') THEN
+  IF v_order_state IS NULL OR v_order_state IN ('draft', 'cancel') THEN
     UPDATE public.sale_order
-    SET billing_state = 'N'
+    SET invoice_state = 'nothing'
     WHERE order_id = p_order_id;
     RETURN;
   END IF;
 
+  /* CÓDIGO ANTERIOR:
+  -- Anteriormente solo se sumaban las cantidades cuando la factura estaba confirmada (am.state = 'posted')
   WITH invoiced_by_line AS (
     SELECT
       aml.sale_order_line_id AS line_id,
       SUM(COALESCE(aml.quantity, 0)) AS total_invoiced
     FROM public.account_move_lines aml
     INNER JOIN public.account_move am ON am.move_id = aml.move_id
-    WHERE am.state IN ('posted', 'R')
+    WHERE am.state = 'posted'
       AND aml.sale_order_line_id IS NOT NULL
       AND aml.sale_order_line_id IN (
         SELECT line_id
@@ -63,7 +65,47 @@ BEGIN
       SELECT 1
       FROM public.account_move_lines aml
       INNER JOIN public.account_move am ON am.move_id = aml.move_id
-      WHERE am.state IN ('posted', 'R')
+      WHERE am.state = 'posted'
+        AND aml.sale_order_line_id = sol.line_id
+    );
+  -- FIN CÓDIGO ANTERIOR */
+
+  -- NUEVA IMPLEMENTACIÓN: Considerar facturas confirmadas ('posted') y en borrador ('draft'), excluyendo canceladas ('cancel')
+  WITH invoiced_by_line AS (
+    SELECT
+      aml.sale_order_line_id AS line_id,
+      SUM(COALESCE(aml.quantity, 0)) AS total_invoiced
+    FROM public.account_move_lines aml
+    INNER JOIN public.account_move am ON am.move_id = aml.move_id
+    WHERE am.state IN ('posted', 'draft')
+      AND aml.sale_order_line_id IS NOT NULL
+      AND aml.sale_order_line_id IN (
+        SELECT line_id
+        FROM public.sale_order_lines
+        WHERE order_id = p_order_id
+          AND (type = 'L' OR type IS NULL OR product_id IS NOT NULL)
+      )
+    GROUP BY aml.sale_order_line_id
+  )
+  UPDATE public.sale_order_lines sol
+  SET
+    invoiced_total = COALESCE(ibl.total_invoiced, 0),
+    invoiced_residual = GREATEST(COALESCE(sol.quantity, 0) - COALESCE(ibl.total_invoiced, 0), 0)
+  FROM invoiced_by_line ibl
+  WHERE sol.line_id = ibl.line_id
+    AND sol.order_id = p_order_id;
+
+  UPDATE public.sale_order_lines sol
+  SET
+    invoiced_total = 0,
+    invoiced_residual = COALESCE(sol.quantity, 0)
+  WHERE sol.order_id = p_order_id
+    AND (sol.type = 'L' OR sol.type IS NULL OR sol.product_id IS NOT NULL)
+    AND NOT EXISTS (
+      SELECT 1
+      FROM public.account_move_lines aml
+      INNER JOIN public.account_move am ON am.move_id = aml.move_id
+      WHERE am.state IN ('posted', 'draft')
         AND aml.sale_order_line_id = sol.line_id
     );
 
@@ -80,15 +122,15 @@ BEGIN
     AND (type = 'L' OR type IS NULL OR product_id IS NOT NULL);
 
   IF v_total_items = 0 OR v_zero_invoiced_items = v_total_items THEN
-    v_new_billing_state := 'P';
+    v_new_invoice_state := 'pending';
   ELSIF v_fully_invoiced_items = v_total_items THEN
-    v_new_billing_state := 'F';
+    v_new_invoice_state := 'complete';
   ELSE
-    v_new_billing_state := 'E';
+    v_new_invoice_state := 'partial';
   END IF;
 
   UPDATE public.sale_order
-  SET billing_state = v_new_billing_state
+  SET invoice_state = v_new_invoice_state
   WHERE order_id = p_order_id;
 END;
 $function$;

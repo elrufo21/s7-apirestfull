@@ -93,8 +93,10 @@ export class ExecutorService {
     if (dto.functionName === 'fnc_account_move_update_edi') {
       const payload = Array.isArray(data) ? data[0] : (data || {});
       const moveId = payload?.in_move_id || payload?.move_id;
-      const xmlReq = payload?.it_edi_xml_request || payload?.edi_xml_request || '';
-      const xmlRes = payload?.it_edi_xml_response || payload?.edi_xml_response || '';
+      const rawXmlReq = String(payload?.it_edi_xml_request || payload?.edi_xml_request || '');
+      const rawXmlRes = String(payload?.it_edi_xml_response || payload?.edi_xml_response || '');
+      const xmlReq = rawXmlReq.includes('<') ? rawXmlReq.replace(/\0/g, '') : '';
+      const xmlRes = rawXmlRes.includes('<') ? rawXmlRes.replace(/\0/g, '') : '';
       const ediState = payload?.it_edi_state || payload?.edi_state || 'S';
       const ediCode = String(payload?.it_edi_code ?? payload?.edi_code ?? '0');
       const ediMessage = String(payload?.it_edi_message ?? payload?.edi_message ?? '');
@@ -133,7 +135,14 @@ export class ExecutorService {
       const actionIdVal = payload?.it_action_id || 'S1';
       const ediCodeVal = String(payload?.it_edi_code || '0');
       const ediMessageVal = String(payload?.it_edi_message || '');
+      const typeVal = String(payload?.it_type || payload?.type || 'edi');
+      const ediStateVal = payload?.it_edi_state || payload?.edi_state || null;
+      const rawAuditXmlReq = payload?.it_edi_xml_request || payload?.edi_xml_request || null;
+      const rawAuditXmlRes = payload?.it_edi_xml_response || payload?.edi_xml_response || null;
+      const xmlReqVal = typeof rawAuditXmlReq === 'string' && rawAuditXmlReq.includes('<') ? rawAuditXmlReq.replace(/\0/g, '') : null;
+      const xmlResVal = typeof rawAuditXmlRes === 'string' && rawAuditXmlRes.includes('<') ? rawAuditXmlRes.replace(/\0/g, '') : null;
 
+      /* CÓDIGO ANTERIOR (Comentado para respaldo - versión previa de 8 parámetros):
       const auditSql = `
         SELECT * FROM public.fnc_account_move_audit_insert(
           $1::bigint,
@@ -150,6 +159,42 @@ export class ExecutorService {
         database,
         auditSql,
         [groupIdVal, filesVal, userIdVal, creationDateVal, moveIdVal, actionIdVal, ediCodeVal, ediMessageVal],
+      );
+      */
+
+      const auditSql = `
+        SELECT * FROM public.fnc_account_move_audit_insert(
+          $1::bigint,
+          $2::jsonb,
+          $3::bigint,
+          $4::timestamp without time zone,
+          $5::bigint,
+          $6::text,
+          $7::text,
+          $8::text,
+          $9::text,
+          $10::text,
+          $11::text,
+          $12::text
+        )
+      `;
+      const rows = await this.tenantDatabaseService.query(
+        database,
+        auditSql,
+        [
+          groupIdVal,
+          filesVal,
+          userIdVal,
+          creationDateVal,
+          moveIdVal,
+          actionIdVal,
+          ediCodeVal,
+          ediMessageVal,
+          typeVal,
+          ediStateVal,
+          xmlReqVal,
+          xmlResVal,
+        ],
       );
 
       return rows;

@@ -267,6 +267,7 @@ export class ApisPeruService {
       return Number.isFinite(n) ? n : fallback;
     };
 
+    /* CÓDIGO ANTERIOR (Comentado para respaldo):
     const mtoOperGravadas = Number(
       toNum(rawInput?.amount_untaxed ?? rawOverrides?.legalMonetaryTotal?.lineExtensionAmount ?? sumGravadas).toFixed(2),
     );
@@ -276,6 +277,30 @@ export class ApisPeruService {
     const totalImpuestos = mtoIGV;
     const valorVenta = Number(
       (mtoOperGravadas + sumExoneradas + sumInafectas).toFixed(2),
+    );
+    const mtoImpVenta = Number(
+      toNum(
+        rawInput?.amount_withtaxed ??
+        rawOverrides?.legalMonetaryTotal?.payableAmount ??
+        (valorVenta + totalImpuestos),
+      ).toFixed(2),
+    );
+    */
+
+    // NUEVA LÓGICA ROBUSTA:
+    // Si hay líneas de detalle, la fuente de la verdad para cada casilla tributaria son las sumatorias de las líneas.
+    const hasLines = details.length > 0;
+    const mtoOperGravadas = Number(
+      (hasLines ? sumGravadas : toNum(rawInput?.amount_untaxed ?? rawOverrides?.legalMonetaryTotal?.lineExtensionAmount ?? 0)).toFixed(2),
+    );
+    const mtoOperExoneradas = Number(sumExoneradas.toFixed(2));
+    const mtoOperInafectas = Number(sumInafectas.toFixed(2));
+    const mtoIGV = Number(
+      (hasLines ? sumIgv : toNum(rawInput?.amount_tax ?? rawOverrides?.taxTotal?.taxAmount ?? 0)).toFixed(2),
+    );
+    const totalImpuestos = mtoIGV;
+    const valorVenta = Number(
+      (mtoOperGravadas + mtoOperExoneradas + mtoOperInafectas).toFixed(2),
     );
     const mtoImpVenta = Number(
       toNum(
@@ -439,6 +464,7 @@ export class ApisPeruService {
 
     // Guardar los archivos de facturación en el servidor local (VPS)
     let uploadResult: any = undefined;
+    let extractedXmlText = '';
 
     try {
       const companyId =
@@ -468,15 +494,56 @@ export class ApisPeruService {
       let responseName = '';
 
       if (xmlBase64) {
+        /* CÓDIGO ANTERIOR (Comentado para respaldo):
+        // Asumía que xmlBase64 siempre era base64; si APIs Perú devolvía XML plano, Buffer.from(..., 'base64') lo corrompía con bytes inválidos ("ioz\"")
         const xmlBuffer = Buffer.from(xmlBase64, 'base64');
-        const zipReq = new AdmZip();
-        zipReq.addFile(`${nombre}.xml`, xmlBuffer);
-        requestName = `request-${nombre}.zip`;
-        const localRequestZip = path.join(xmlDir, requestName);
-        fs.writeFileSync(localRequestZip, zipReq.toBuffer());
-        // También guardar el archivo XML plano
-        fs.writeFileSync(path.join(xmlDir, `${nombre}.xml`), xmlBuffer);
-        requestPath = `/storage/${companyFolder}/facturacion/xml/${requestName}`;
+        const isZip = xmlBuffer.length > 4 && xmlBuffer[0] === 0x50 && xmlBuffer[1] === 0x4b;
+        ...
+        */
+
+        // NUEVA LÓGICA ROBUSTA:
+        const isPlainXml = typeof xmlBase64 === 'string' && xmlBase64.trim().startsWith('<');
+        if (isPlainXml) {
+          extractedXmlText = xmlBase64;
+          const xmlBuffer = Buffer.from(xmlBase64, 'utf8');
+          const zipReq = new AdmZip();
+          zipReq.addFile(`${nombre}.xml`, xmlBuffer);
+          requestName = `request-${nombre}.zip`;
+          const localRequestZip = path.join(xmlDir, requestName);
+          fs.writeFileSync(localRequestZip, zipReq.toBuffer());
+          fs.writeFileSync(path.join(xmlDir, `${nombre}.xml`), xmlBuffer);
+          requestPath = `/storage/${companyFolder}/facturacion/xml/${requestName}`;
+        } else {
+          const xmlBuffer = Buffer.from(xmlBase64, 'base64');
+          const isZip = xmlBuffer.length > 4 && xmlBuffer[0] === 0x50 && xmlBuffer[1] === 0x4b;
+          if (isZip) {
+            try {
+              const incomingZip = new AdmZip(xmlBuffer);
+              const xmlEntry = incomingZip.getEntries().find((e) => e.entryName.toLowerCase().endsWith('.xml'));
+              if (xmlEntry) {
+                extractedXmlText = xmlEntry.getData().toString('utf8');
+              }
+            } catch (e) {
+              this.logger.warn(`[ApisPeru] Error descomprimiendo xmlBase64: ${e}`);
+            }
+            requestName = `request-${nombre}.zip`;
+            const localRequestZip = path.join(xmlDir, requestName);
+            fs.writeFileSync(localRequestZip, xmlBuffer);
+            if (extractedXmlText) {
+              fs.writeFileSync(path.join(xmlDir, `${nombre}.xml`), extractedXmlText, 'utf8');
+            }
+            requestPath = `/storage/${companyFolder}/facturacion/xml/${requestName}`;
+          } else {
+            extractedXmlText = xmlBuffer.toString('utf8');
+            const zipReq = new AdmZip();
+            zipReq.addFile(`${nombre}.xml`, xmlBuffer);
+            requestName = `request-${nombre}.zip`;
+            const localRequestZip = path.join(xmlDir, requestName);
+            fs.writeFileSync(localRequestZip, zipReq.toBuffer());
+            fs.writeFileSync(path.join(xmlDir, `${nombre}.xml`), xmlBuffer);
+            requestPath = `/storage/${companyFolder}/facturacion/xml/${requestName}`;
+          }
+        }
       }
 
       if (cdrBase64) {
@@ -525,23 +592,41 @@ export class ApisPeruService {
       };
     }
 
-    const xmlRequestContent = xmlBase64 ? Buffer.from(xmlBase64, 'base64').toString('utf8') : '';
-    const codeSunat = String(cdrResponse?.code ?? cdrParsed?.responseCode ?? (isSuccess ? '0' : '9999'));
-    const descriptionSunat = String(cdrResponse?.description ?? cdrParsed?.description ?? (isSuccess ? 'Comprobante aceptado por SUNAT' : 'Rechazado'));
+    const rawXmlReq = extractedXmlText || (typeof xmlBase64 === 'string' && xmlBase64.includes('<') ? xmlBase64 : '');
+    const cleanXmlRequestContent = rawXmlReq.includes('<') ? rawXmlReq.replace(/\0/g, '') : '';
+    const cleanXmlResponseContent = (cdrParsed?.xmlContent || '').includes('<') ? (cdrParsed.xmlContent as string).replace(/\0/g, '') : '';
+
+    const rawErrorMsg =
+      sunatResponse?.error?.message ||
+      sunatResponse?.message ||
+      data?.message ||
+      data?.error ||
+      '';
+    const codeSunat = String(
+      cdrResponse?.code ??
+      cdrParsed?.responseCode ??
+      sunatResponse?.error?.code ??
+      (isSuccess ? '0' : '9999'),
+    );
+    const descriptionSunat = String(
+      cdrResponse?.description ??
+      cdrParsed?.description ??
+      (isSuccess ? 'Comprobante aceptado por SUNAT' : (rawErrorMsg || 'Rechazado')),
+    );
 
     return {
       success: isSuccess,
       flow: 'apisperu_builder',
       nombre,
       hash,
-      xml: xmlRequestContent,
+      xml: cleanXmlRequestContent,
       zip: xmlBase64,
       cdrBase64,
       cdr: cdrParsed,
       uploadResult,
       toDb: {
-        xml_request: xmlRequestContent,
-        xml_response: cdrParsed?.xmlContent || '',
+        xml_request: cleanXmlRequestContent,
+        xml_response: cleanXmlResponseContent,
         code_sunat: codeSunat,
         description_sunat: descriptionSunat,
         date: cdrParsed?.date || new Date().toISOString(),

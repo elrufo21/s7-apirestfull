@@ -243,6 +243,8 @@ BEGIN
     RAISE EXCEPTION 'La orden de venta % no tiene moneda', pn_order_id;
   END IF;
 
+  /* CÓDIGO ANTERIOR:
+  -- Se restringía la creación de facturas si ya existía una en borrador
   IF EXISTS (
     SELECT 1
     FROM public.account_move_lines aml
@@ -256,6 +258,7 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'La orden de venta % ya tiene una factura borrador pendiente', pn_order_id;
   END IF;
+  FIN CÓDIGO ANTERIOR */
 
   pb_has_invoice_lines :=
     ij_data ? 'invoice_lines'

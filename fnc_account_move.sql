@@ -616,7 +616,17 @@ developer_text := pt_config_filters;
         to_char(move.amount_tax, ' || a || '"' || a || ' || ' || 'div.symbol' || ' || ' || a || '" FM999G999G990D00' || a || ') amount_tax_in_currency,
         to_char(move.amount_withtaxed, ' || a || '"' || a || ' || ' || 'div.symbol' || ' || ' || a || '" FM999G999G990D00' || a || ') amount_withtaxed_in_currency,
         to_char(move.amount_paid, ' || a || '"' || a || ' || ' || 'div.symbol' || ' || ' || a || '" FM999G999G990D00' || a || ') amount_paid_in_currency,
-        to_char(move.amount_to_be_paid, ' || a || '"' || a || ' || ' || 'div.symbol' || ' || ' || a || '" FM999G999G990D00' || a || ') amount_to_be_paid_in_currency
+        to_char(move.amount_to_be_paid, ' || a || '"' || a || ' || ' || 'div.symbol' || ' || ' || a || '" FM999G999G990D00' || a || ') amount_to_be_paid_in_currency,
+
+        /* =========================================================================
+           CÓDIGO ANTERIOR:
+           No se consultaban campos de EDI ni auditoría en el listado 's'.
+           ========================================================================= */
+        /* NUEVO: EDI status desde auditoría (account_move_audit) */
+        coalesce(last_edi.edi_state, ' || a || 'to_be_sent' || a || ') edi_state,
+        last_edi.edi_code,
+        last_edi.edi_message,
+        coalesce(last_edi.edi_sent, ' || a || 'U' || a || ') edi_sent
 
         /*
         (div.symbol || ' || a || ' ' || a || ' || move.amount_untaxed::text) amount_untaxed_in_currency,
@@ -649,6 +659,18 @@ developer_text := pt_config_filters;
         tmp_base || ' move 
         left join ' || tmp_base_name || ' dsc_con on dsc_con.partner_id = move.partner_id 
         left join currency div on div.currency_id = move.currency_id 
+        /* NUEVO: Lateral join con el último registro EDI en auditoría */
+        left join lateral (
+          select 
+            aud.edi_state,
+            aud.edi_code,
+            aud.edi_message,
+            ' || a || 'S' || a || '::text as edi_sent
+          from public.account_move_audit aud
+          where aud.move_id = move.move_id and (aud.type = ' || a || 'edi' || a || ' or aud.edi_state is not null)
+          order by aud.audit_id desc
+          limit 1
+        ) last_edi on true 
 
       /*
         left join location_sl3 dst on dst.location_sl3_id = con.location_sl3_id 
@@ -761,7 +783,11 @@ developer_text := pt_config_filters;
         (fnc_config_tools(it_plot_1 => 'query_columns', ij_1 => 
         '[
           ["CASE_WHEN", "edi_sent_description", "edi_sent", [["U","No enviado"],["S","Enviado"]]],
-          ["CASE_WHEN", "edi_state_description", "edi_state", [["P","Pendiente"],["EE","Error"],["ER","Rechazado"],["S","Éxito"]]],
+          /* =========================================================================
+             CÓDIGO ANTERIOR:
+             ["CASE_WHEN", "edi_state_description", "edi_state", [["P","Pendiente"],["EE","Error"],["ER","Rechazado"],["S","Éxito"]]],
+             ========================================================================= */
+          ["CASE_WHEN", "edi_state_description", "edi_state", [["to_be_sent","Pendiente"],["accepted","Aceptado"],["remarks","Observado"],["refused","Rechazado"],["exception","Excepción"],["connection_error","Error de conexión"],["P","Pendiente"],["EE","Error"],["ER","Rechazado"],["S","Éxito"]]],
           ["CASE_WHEN", "payment_state_description", "payment_state", [["not_paid","Sin pagar"],["partial","Pago parcial"],["paid","Pagado"],["reversed","Revertido"]]],
           ["CASE_WHEN", "email_sent_description", "email_sent_state", [["unsent","Sin enviar"],["sent","Enviado"]]]
         ]')).ot_1 
@@ -984,7 +1010,10 @@ developer_text := pt_config_filters;
 
       || ', ' || a || 'residual_payments' || a || ', (
       case 
+        /* CÓDIGO ANTERIOR:
         when move.payment_state = ' || a || 'not_paid' || a || ' or move.payment_state = ' || a || 'partial' || a || ' then '
+        FIN CÓDIGO ANTERIOR */
+        when (move.payment_state = ' || a || 'not_paid' || a || ' or move.payment_state = ' || a || 'partial' || a || ' or move.payment_state is null) and coalesce(move.amount_to_be_paid, 0) > 0 then '
         || '(' ||
 
         'select json_agg(jsonb_build_object(' ||
