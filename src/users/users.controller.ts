@@ -33,4 +33,13 @@ export class UsersController {
   ) {
     return this.usersService.update(userId, dto, request.user);
   }
+
+  @Post(':id/resend-invite')
+  resendInvite(
+    @Param('id') id: string,
+    @Body() body: any,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.usersService.resendInvite(id, request.user, body);
+  }
 }

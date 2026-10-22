@@ -8,6 +8,7 @@ import {
 import { AuthDatabaseService } from '../auth-database/auth-database.service';
 import type { JwtPayload } from '../auth/jwt-auth.guard';
 import { EmailService } from '../email/email.service';
+import { TenantDatabaseService } from '../tenant-database/tenant-database.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 
@@ -25,6 +26,7 @@ export class UsersService {
   constructor(
     private readonly authDatabaseService: AuthDatabaseService,
     private readonly emailService: EmailService,
+    private readonly tenantDatabaseService: TenantDatabaseService,
   ) {}
 
   async create(dto: CreateUserDto, user: JwtPayload) {
@@ -100,5 +102,83 @@ export class UsersService {
     }
 
     return { success: true, message: 'Usuario actualizado correctamente' };
+  }
+
+  async resendInvite(
+    target: string,
+    user: JwtPayload,
+    body?: { email?: string; user_id?: number | string; partner_id?: number | string },
+  ) {
+    const rawTarget = String(target || '').trim();
+    const emailCandidate = (body?.email || (rawTarget.includes('@') ? rawTarget : '')).trim().toLowerCase();
+
+    let userRow: { user_id: number; email: string; password?: string; name: string } | null = null;
+
+    // 1. Buscar por email si está disponible
+    if (emailCandidate) {
+      const rows = await this.authDatabaseService.query<any>(
+        'SELECT user_id, email, password, name FROM public."user" WHERE lower(email) = lower($1) AND group_id = $2 LIMIT 1',
+        [emailCandidate, user.groupId],
+      );
+      if (rows.length > 0) {
+        userRow = rows[0];
+      }
+    }
+
+    // 2. Si no se encontró por email, intentar por user_id numérico
+    const numericId = Number(body?.user_id || (!Number.isNaN(Number(rawTarget)) ? Number(rawTarget) : null));
+    if (!userRow && numericId) {
+      const rows = await this.authDatabaseService.query<any>(
+        'SELECT user_id, email, password, name FROM public."user" WHERE user_id = $1 AND group_id = $2 LIMIT 1',
+        [numericId, user.groupId],
+      );
+      if (rows.length > 0) {
+        userRow = rows[0];
+      }
+    }
+
+    // 3. Si aún no se encuentra, buscar por partner_id en el tenant
+    const partnerId = Number(body?.partner_id || (!Number.isNaN(Number(rawTarget)) ? Number(rawTarget) : null));
+    if (!userRow && partnerId && user.database) {
+      try {
+        const tenantRows = await this.tenantDatabaseService.query<any>(
+          user.database,
+          'SELECT email, user_id FROM public.user WHERE partner_id = $1 LIMIT 1',
+          [partnerId],
+        );
+        if (tenantRows.length > 0 && tenantRows[0]?.email) {
+          const rows = await this.authDatabaseService.query<any>(
+            'SELECT user_id, email, password, name FROM public."user" WHERE lower(email) = lower($1) AND group_id = $2 LIMIT 1',
+            [tenantRows[0].email.trim().toLowerCase(), user.groupId],
+          );
+          if (rows.length > 0) {
+            userRow = rows[0];
+          }
+        }
+      } catch (err) {
+        this.logger.warn(`Error buscando partner ${partnerId} en tenant ${user.database}: ${err}`);
+      }
+    }
+
+    if (!userRow) {
+      throw new NotFoundException('Usuario no encontrado para enviar la invitación');
+    }
+
+    const passwordToSend =
+      userRow.password?.trim() || defaultPassword(userRow.name || 'usuario');
+
+    await this.emailService.sendUserCredentialsEmail({
+      to: userRow.email.trim().toLowerCase(),
+      name: userRow.name?.trim() || userRow.email,
+      password: passwordToSend,
+      database: user.database,
+    });
+
+    this.logger.log(`Invitación reenviada con éxito a ${userRow.email}`);
+
+    return {
+      success: true,
+      message: `Correo de invitación reenviado con éxito a ${userRow.email}`,
+    };
   }
 }
