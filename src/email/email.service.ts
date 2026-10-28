@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { JwtService } from '@nestjs/jwt';
 import fs from 'node:fs';
 import path from 'node:path';
 import nodemailer from 'nodemailer';
@@ -21,6 +22,7 @@ export interface CompanyMailServerConfig {
 
 type EmailBody = {
   to?: string;
+  name?: string;
   subject?: string;
   text?: string;
   message?: string;
@@ -39,6 +41,7 @@ export class EmailService {
   constructor(
     private readonly configService: ConfigService,
     private readonly tenantDatabaseService: TenantDatabaseService,
+    private readonly jwtService: JwtService,
   ) {}
 
   private getDefaultDatabase(): string {
@@ -317,11 +320,30 @@ export class EmailService {
     }
   }
 
-  async sendPasswordResetEmail(body: EmailBody & { resetUrl?: string }) {
+  async sendPasswordResetEmail(body: EmailBody & { resetUrl?: string; userId?: number | string }) {
     if (!body.to && body['email' as keyof typeof body]) {
       body.to = String(body['email' as keyof typeof body]);
     }
-    if (!body.to || !body.resetUrl) {
+    if (!body.to) {
+      throw new BadRequestException('Falta el campo requerido: email');
+    }
+
+    const email = body.to;
+    let resetUrl = body.resetUrl;
+
+    if (!resetUrl && body.userId) {
+      const frontendUrl =
+        this.configService.get<string>('FRONTEND_URL') ||
+        (this.configService.get<string>('CORS_ORIGIN') || '').split(',')[0] ||
+        'http://localhost:5173';
+      const token = await this.jwtService.signAsync(
+        { sub: body.userId, userId: body.userId, email, purpose: 'reset-password', type: 'password-reset' },
+        { expiresIn: '1h' },
+      );
+      resetUrl = `${frontendUrl}/reset-password/${body.userId}/${token}`;
+    }
+
+    if (!resetUrl) {
       throw new BadRequestException('Faltan campos requeridos: email y resetUrl');
     }
 
@@ -330,9 +352,22 @@ export class EmailService {
 
     return this.sendInvoiceEmail({
       to: body.to,
-      subject: 'Restablece tu contrasena',
-      text: `${greeting}\n\nRecibimos una solicitud para restablecer tu contrasena. Usa el siguiente enlace para continuar:\n${body.resetUrl}`,
-      html: `<p>${greeting}</p><p>Recibimos una solicitud para restablecer tu contrasena.</p><p><a href="${body.resetUrl}">Cambiar contrasena</a></p>`,
+      subject: 'Restablece tu contraseña',
+      text: `${greeting}\n\nRecibimos una solicitud para restablecer tu contraseña. Usa el siguiente enlace para continuar:\n${resetUrl}\n\nEste enlace expirará en 1 hora.`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
+          <h2 style="color: #0f172a; margin-top: 0;">${greeting}</h2>
+          <p style="color: #334155; font-size: 15px;">Recibimos una solicitud para restablecer tu contraseña en el sistema.</p>
+          <div style="margin: 24px 0; text-align: center;">
+            <a href="${resetUrl}" style="background-color: #121b3c; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block; font-weight: bold; font-size: 14px;">
+              Restablecer mi contraseña
+            </a>
+          </div>
+          <p style="color: #64748b; font-size: 13px;">Si no solicitaste este cambio, puedes ignorar este correo con tranquilidad. El enlace expirará en 1 hora.</p>
+          <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
+          <p style="color: #94a3b8; font-size: 12px; margin-bottom: 0;">Este es un mensaje automático, por favor no respondas a este correo.</p>
+        </div>
+      `,
     });
   }
 
@@ -342,15 +377,40 @@ export class EmailService {
     password: string;
     database?: string;
     companyId?: number;
+    verifyToken?: string;
   }) {
-    const { to, name, password, database, companyId } = params;
+    const { to, name, password, database, companyId, verifyToken } = params;
     const greeting = name ? `Hola ${name},` : 'Hola,';
+    const frontendUrl =
+      this.configService.get<string>('FRONTEND_URL') ||
+      (this.configService.get<string>('CORS_ORIGIN') || '').split(',')[0] ||
+      'http://localhost:5173';
+
+    const verifyUrl = verifyToken
+      ? `${frontendUrl}/verify-email?token=${verifyToken}`
+      : null;
+
+    const verifyText = verifyUrl
+      ? `\n\nPara confirmar tu cuenta de correo, por favor ingresa al siguiente enlace:\n${verifyUrl}\n\n`
+      : '\n\n';
+
+    const verifyHtml = verifyUrl
+      ? `
+        <div style="margin: 24px 0 16px 0; text-align: center;">
+          <a href="${verifyUrl}" style="background-color: #0f766e; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block; font-weight: bold; font-size: 14px;">
+            Confirmar mi cuenta
+          </a>
+        </div>
+      `
+      : '';
 
     const text = `${greeting}\n\n` +
       `Se ha creado tu cuenta de usuario para acceder al sistema.\n\n` +
       `Credenciales de acceso:\n` +
       `- Correo: ${to}\n` +
-      `- Contraseña temporal: ${password}\n\n` +
+      `- Contraseña temporal: ${password}\n` +
+      (database ? `- Empresa / Base de datos: ${database}\n` : '') +
+      verifyText +
       `Te recomendamos ingresar al sistema y cambiar tu contraseña en tu perfil.\n\n` +
       `Saludos cordiales,\nEquipo de Administración.`;
 
@@ -362,7 +422,9 @@ export class EmailService {
         <div style="background-color: #f8fafc; border-left: 4px solid #2563eb; padding: 15px; margin: 20px 0; border-radius: 4px;">
           <p style="margin: 0 0 10px 0; color: #1e293b; font-size: 14px;"><strong>Usuario / Correo:</strong> <span style="color: #2563eb;">${to}</span></p>
           <p style="margin: 0; color: #1e293b; font-size: 14px;"><strong>Contraseña temporal:</strong> <span style="font-family: monospace; background-color: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-weight: bold;">${password}</span></p>
+          ${database ? `<p style="margin: 10px 0 0 0; color: #1e293b; font-size: 14px;"><strong>Empresa / Base de datos:</strong> ${database}</p>` : ''}
         </div>
+        ${verifyHtml}
         <p style="color: #64748b; font-size: 13px;">Por seguridad, te sugerimos iniciar sesión y actualizar tu contraseña.</p>
         <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
         <p style="color: #94a3b8; font-size: 12px; margin-bottom: 0;">Este es un mensaje automático, por favor no responda directamente a este correo.</p>
@@ -371,7 +433,7 @@ export class EmailService {
 
     return this.sendInvoiceEmail({
       to,
-      subject: 'Bienvenido - Tus credenciales de acceso al sistema',
+      subject: 'Tus credenciales de acceso y confirmación de cuenta',
       text,
       html,
       database,

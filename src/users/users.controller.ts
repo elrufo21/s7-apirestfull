@@ -42,4 +42,22 @@ export class UsersController {
   ) {
     return this.usersService.resendInvite(id, request.user, body);
   }
+
+  @Post(':id/password/verify')
+  verifyPassword(
+    @Param('id', ParseIntPipe) userId: number,
+    @Body() body: { password?: string },
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.usersService.verifyPassword(userId, body?.password || '', request.user);
+  }
+
+  @Put(':id/password')
+  updatePassword(
+    @Param('id', ParseIntPipe) userId: number,
+    @Body() body: { password?: string },
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.usersService.updatePassword(userId, body?.password || '', request.user);
+  }
 }
