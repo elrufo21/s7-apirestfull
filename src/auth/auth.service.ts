@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   InternalServerErrorException,
   NotFoundException,
   UnauthorizedException,
@@ -16,6 +17,8 @@ import { ValidateEmailDto } from './dto/validate-email.dto';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly authDatabaseService: AuthDatabaseService,
     private readonly tenantDatabaseService: TenantDatabaseService,
@@ -81,36 +84,46 @@ export class AuthService {
   }
 
   async validateEmail(dto: ValidateEmailDto) {
-    const email = dto.it_email?.trim().toLowerCase();
-    if (!email) {
+    try {
+      const email = dto?.it_email?.trim().toLowerCase();
+      if (!email) {
+        return [
+          {
+            oj_info: { code: 401, type: 'error', action: 'select', message: '¡El correo es requerido!' },
+            oj_data: null,
+          },
+        ];
+      }
+
+      const rows = await this.authDatabaseService.query<{ user_id: number; email: string; name: string }>(
+        'SELECT user_id, email, name FROM public."user" WHERE lower(email) = lower($1) LIMIT 1',
+        [email],
+      );
+
+      if (!rows || rows.length === 0) {
+        return [
+          {
+            oj_info: { code: 401, type: 'error', action: 'select', message: '¡El correo no existe!' },
+            oj_data: null,
+          },
+        ];
+      }
+
       return [
         {
-          oj_info: { code: 401, type: 'error', action: 'select', message: '¡El correo es requerido!' },
+          oj_info: { code: 201, type: 'success', action: 'select', message: '¡Se realizó la consulta con éxito!' },
+          oj_data: { user_id: rows[0].user_id, email: rows[0].email, name: rows[0].name },
+        },
+      ];
+    } catch (error: any) {
+      this.logger.error(`Error en validateEmail: ${error?.message || error}`);
+      return [
+        {
+          oj_info: { code: 401, type: 'error', action: 'select', message: 'No se pudo consultar el correo' },
           oj_data: null,
         },
       ];
     }
-
-    const rows = await this.authDatabaseService.query<{ user_id: number; email: string; name: string }>(
-      'SELECT user_id, email, name FROM public."user" WHERE lower(email) = lower($1) LIMIT 1',
-      [email],
-    );
-
-    if (!rows || rows.length === 0) {
-      return [
-        {
-          oj_info: { code: 401, type: 'error', action: 'select', message: '¡El correo no existe!' },
-          oj_data: null,
-        },
-      ];
-    }
-
-    return [
-      {
-        oj_info: { code: 201, type: 'success', action: 'select', message: '¡Se realizó la consulta con éxito!' },
-        oj_data: { user_id: rows[0].user_id, email: rows[0].email, name: rows[0].name },
-      },
-    ];
   }
 
   async sendPasswordResetEmail(body: { email?: string; userId?: number | string; name?: string; resetUrl?: string }) {
@@ -189,7 +202,10 @@ export class AuthService {
     return { success: true, message: '¡Contraseña restablecida con éxito!' };
   }
 
-  async verifyEmail(token: string) {
+  async verifyEmail(dto: { token: string; password?: string } | string) {
+    const token = typeof dto === 'string' ? dto : dto?.token;
+    const password = typeof dto === 'string' ? undefined : dto?.password;
+
     if (!token) {
       throw new BadRequestException('Token de verificación requerido');
     }
@@ -209,18 +225,42 @@ export class AuthService {
     const targetDb = payload.database || 'railway';
 
     try {
-      await this.tenantDatabaseService.query(
-        targetDb,
-        'UPDATE public."user" SET verified = true WHERE user_id = $1',
-        [targetUserId],
+      // 1. Si el usuario definió una nueva contraseña, actualizarla en s7_auth
+      if (password && password.trim() !== '') {
+        const passRes = await this.authDatabaseService.query<{ oj_info: any }>(
+          'SELECT * FROM public.fnc_user_password_update($1, $2)',
+          [Number(targetUserId), password.trim()],
+        );
+        const info = passRes[0]?.oj_info;
+        if (info?.code && info.code >= 400) {
+          throw new BadRequestException(info.message || 'Error al guardar la contraseña');
+        }
+      }
+
+      // 2. Activar usuario en la base central de login (s7_auth)
+      await this.authDatabaseService.query(
+        'UPDATE public."user" SET state = $1 WHERE user_id = $2',
+        ['A', Number(targetUserId)],
       );
+
+      // 3. Activar y marcar verified en la base tenant (railway)
+      try {
+        await this.tenantDatabaseService.query(
+          targetDb,
+          'UPDATE public."user" SET verified = true, state = $1 WHERE user_id = $2',
+          ['A', Number(targetUserId)],
+        );
+      } catch (tenantErr) {
+        this.logger.warn(`No se pudo actualizar verified en tenant (${targetDb}): ${tenantErr}`);
+      }
     } catch (err: any) {
-      throw new BadRequestException(`No se pudo actualizar el estado de confirmación: ${err?.message || err}`);
+      if (err instanceof BadRequestException) throw err;
+      throw new BadRequestException(`No se pudo completar la activación: ${err?.message || err}`);
     }
 
     return {
       success: true,
-      message: '¡Tu correo electrónico ha sido confirmado con éxito!',
+      message: '¡Cuenta activada y contraseña configurada con éxito!',
     };
   }
 }

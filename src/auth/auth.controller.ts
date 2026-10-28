@@ -29,7 +29,7 @@ export class AuthController {
   }
 
   @Post('verify-email')
-  verifyEmail(@Body() dto: { token: string }) {
-    return this.authService.verifyEmail(dto?.token);
+  verifyEmail(@Body() dto: { token: string; password?: string }) {
+    return this.authService.verifyEmail(dto);
   }
 }

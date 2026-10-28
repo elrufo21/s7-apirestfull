@@ -14,11 +14,11 @@ export class AuthDatabaseService implements OnModuleInit, OnModuleDestroy {
 
   constructor(private readonly configService: ConfigService) {
     this.pool = new Pool({
-      host: this.configService.getOrThrow<string>('AUTH_DB_HOST'),
-      port: Number(this.configService.getOrThrow<string>('AUTH_DB_PORT')),
-      user: this.configService.getOrThrow<string>('AUTH_DB_USER'),
-      password: this.configService.getOrThrow<string>('AUTH_DB_PASSWORD'),
-      database: this.configService.getOrThrow<string>('AUTH_DB_NAME'),
+      host: this.configService.get<string>('AUTH_DB_HOST') || '169.58.105.101',
+      port: Number(this.configService.get<string>('AUTH_DB_PORT') || 5432),
+      user: this.configService.get<string>('AUTH_DB_USER') || 'postgres',
+      password: this.configService.get<string>('AUTH_DB_PASSWORD') || 'linksoft2026',
+      database: this.configService.get<string>('AUTH_DB_NAME') || 's7_auth',
 
       // Máximo de conexiones abiertas hacia la base central.
       max: 10,
@@ -48,17 +48,16 @@ export class AuthDatabaseService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async query<T extends QueryResultRow>(
+  async onModuleDestroy(): Promise<void> {
+    await this.pool.end();
+  }
+
+  async query<T extends QueryResultRow = QueryResultRow>(
     sql: string,
     parameters: unknown[] = [],
   ): Promise<T[]> {
     const result = await this.pool.query<T>(sql, parameters);
+
     return result.rows;
-  }
-
-  async onModuleDestroy(): Promise<void> {
-    await this.pool.end();
-
-    this.logger.log('Conexión cerrada con la base central de autenticación');
   }
 }

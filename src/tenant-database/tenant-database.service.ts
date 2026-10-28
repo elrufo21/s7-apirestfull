@@ -18,10 +18,10 @@ export class TenantDatabaseService implements OnModuleDestroy {
     }
 
     const pool = new Pool({
-      host: this.configService.getOrThrow<string>('TENANT_DB_HOST'),
-      port: Number(this.configService.getOrThrow<string>('TENANT_DB_PORT')),
-      user: this.configService.getOrThrow<string>('TENANT_DB_USER'),
-      password: this.configService.getOrThrow<string>('TENANT_DB_PASSWORD'),
+      host: this.configService.get<string>('TENANT_DB_HOST') || '169.58.105.101',
+      port: Number(this.configService.get<string>('TENANT_DB_PORT') || 5432),
+      user: this.configService.get<string>('TENANT_DB_USER') || 'postgres',
+      password: this.configService.get<string>('TENANT_DB_PASSWORD') || 'linksoft2026',
       database: databaseName,
 
       max: 10,
@@ -49,46 +49,22 @@ export class TenantDatabaseService implements OnModuleDestroy {
     parameters: unknown[] = [],
   ): Promise<T[]> {
     const pool = this.getPool(databaseName);
-
     const result = await pool.query<T>(sql, parameters);
 
     return result.rows;
   }
 
-  async transaction<T>(
-    databaseName: string,
-    callback: (client: PoolClient) => Promise<T>,
-  ): Promise<T> {
-    const client = await this.getPool(databaseName).connect();
-
-    try {
-      await client.query('BEGIN');
-      const result = await callback(client);
-      await client.query('COMMIT');
-      return result;
-    } catch (error) {
-      await client.query('ROLLBACK').catch(() => undefined);
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
-
-  async testConnection(databaseName: string): Promise<void> {
+  async getClient(databaseName: string): Promise<PoolClient> {
     const pool = this.getPool(databaseName);
 
-    await pool.query('SELECT 1');
-
-    this.logger.log(`Conexión correcta con la base: ${databaseName}`);
+    return pool.connect();
   }
 
   async onModuleDestroy(): Promise<void> {
-    for (const [databaseName, pool] of this.pools.entries()) {
-      await pool.end();
+    const closePromises = Array.from(this.pools.values()).map((pool) =>
+      pool.end(),
+    );
 
-      this.logger.log(`Pool cerrado para la base: ${databaseName}`);
-    }
-
-    this.pools.clear();
+    await Promise.all(closePromises);
   }
 }

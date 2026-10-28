@@ -374,12 +374,12 @@ export class EmailService {
   async sendUserCredentialsEmail(params: {
     to: string;
     name: string;
-    password: string;
+    password?: string;
     database?: string;
     companyId?: number;
     verifyToken?: string;
   }) {
-    const { to, name, password, database, companyId, verifyToken } = params;
+    const { to, name, database, companyId, verifyToken } = params;
     const greeting = name ? `Hola ${name},` : 'Hola,';
     const frontendUrl =
       this.configService.get<string>('FRONTEND_URL') ||
@@ -388,52 +388,45 @@ export class EmailService {
 
     const verifyUrl = verifyToken
       ? `${frontendUrl}/verify-email?token=${verifyToken}`
-      : null;
-
-    const verifyText = verifyUrl
-      ? `\n\nPara confirmar tu cuenta de correo, por favor ingresa al siguiente enlace:\n${verifyUrl}\n\n`
-      : '\n\n';
-
-    const verifyHtml = verifyUrl
-      ? `
-        <div style="margin: 24px 0 16px 0; text-align: center;">
-          <a href="${verifyUrl}" style="background-color: #0f766e; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block; font-weight: bold; font-size: 14px;">
-            Confirmar mi cuenta
-          </a>
-        </div>
-      `
-      : '';
+      : `${frontendUrl}/auth`;
 
     const text = `${greeting}\n\n` +
-      `Se ha creado tu cuenta de usuario para acceder al sistema.\n\n` +
-      `Credenciales de acceso:\n` +
-      `- Correo: ${to}\n` +
-      `- Contraseña temporal: ${password}\n` +
-      (database ? `- Empresa / Base de datos: ${database}\n` : '') +
-      verifyText +
-      `Te recomendamos ingresar al sistema y cambiar tu contraseña en tu perfil.\n\n` +
+      `Se ha creado tu cuenta de usuario para acceder a S7 ERP.\n\n` +
+      `Para activar tu cuenta y configurar tu contraseña de acceso, por favor ingresa al siguiente enlace:\n` +
+      `${verifyUrl}\n\n` +
+      `Usuario / Correo: ${to}\n` +
+      (database ? `Empresa / Base de datos: ${database}\n\n` : '\n') +
       `Saludos cordiales,\nEquipo de Administración.`;
 
     const html = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
-        <h2 style="color: #1e3a8a; margin-top: 0;">Bienvenido(a) al Sistema</h2>
-        <p style="color: #334155; font-size: 15px;">${greeting}</p>
-        <p style="color: #334155; font-size: 14px;">Se ha creado tu cuenta de usuario para acceder al sistema. A continuación encontrarás tus credenciales de acceso:</p>
-        <div style="background-color: #f8fafc; border-left: 4px solid #2563eb; padding: 15px; margin: 20px 0; border-radius: 4px;">
-          <p style="margin: 0 0 10px 0; color: #1e293b; font-size: 14px;"><strong>Usuario / Correo:</strong> <span style="color: #2563eb;">${to}</span></p>
-          <p style="margin: 0; color: #1e293b; font-size: 14px;"><strong>Contraseña temporal:</strong> <span style="font-family: monospace; background-color: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-weight: bold;">${password}</span></p>
-          ${database ? `<p style="margin: 10px 0 0 0; color: #1e293b; font-size: 14px;"><strong>Empresa / Base de datos:</strong> ${database}</p>` : ''}
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 8px; background-color: #ffffff;">
+        <h2 style="color: #0f172a; margin-top: 0; font-size: 20px;">¡Bienvenido(a) a S7 ERP!</h2>
+        <p style="color: #334155; font-size: 15px; line-height: 1.5;">${greeting}</p>
+        <p style="color: #334155; font-size: 14px; line-height: 1.5;">Se ha creado tu cuenta de acceso a la plataforma. Para completar tu registro y activar tu cuenta, por favor haz clic en el siguiente botón para establecer tu contraseña personal:</p>
+        
+        <div style="margin: 28px 0; text-align: center;">
+          <a href="${verifyUrl}" style="background-color: #121b3c; color: #ffffff; padding: 14px 28px; text-decoration: none; border-radius: 6px; display: inline-block; font-weight: bold; font-size: 15px; letter-spacing: 0.5px;">
+            Activar cuenta y configurar contraseña
+          </a>
         </div>
-        ${verifyHtml}
-        <p style="color: #64748b; font-size: 13px;">Por seguridad, te sugerimos iniciar sesión y actualizar tu contraseña.</p>
-        <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
-        <p style="color: #94a3b8; font-size: 12px; margin-bottom: 0;">Este es un mensaje automático, por favor no responda directamente a este correo.</p>
+
+        <div style="background-color: #f8fafc; border-left: 4px solid #121b3c; padding: 12px 16px; margin: 20px 0; border-radius: 4px;">
+          <p style="margin: 0; color: #475569; font-size: 13px;"><strong>Usuario / Correo asignado:</strong> <span style="color: #1e293b;">${to}</span></p>
+          ${database ? `<p style="margin: 6px 0 0 0; color: #475569; font-size: 13px;"><strong>Base de datos:</strong> ${database}</p>` : ''}
+        </div>
+
+        <p style="color: #64748b; font-size: 13px; line-height: 1.4;">Si el botón no funciona, también puedes copiar y pegar el siguiente enlace en tu navegador:<br />
+          <a href="${verifyUrl}" style="color: #2563eb; word-break: break-all;">${verifyUrl}</a>
+        </p>
+
+        <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
+        <p style="color: #94a3b8; font-size: 12px; margin-bottom: 0;">Este es un mensaje automático de seguridad, por favor no responda directamente a este correo.</p>
       </div>
     `;
 
     return this.sendInvoiceEmail({
       to,
-      subject: 'Tus credenciales de acceso y confirmación de cuenta',
+      subject: '¡Bienvenido(a) a S7 ERP! Activa tu cuenta',
       text,
       html,
       database,
