@@ -394,8 +394,7 @@ export class EmailService {
       `Se ha creado tu cuenta de usuario para acceder a S7 ERP.\n\n` +
       `Para activar tu cuenta y configurar tu contraseña de acceso, por favor ingresa al siguiente enlace:\n` +
       `${verifyUrl}\n\n` +
-      `Usuario / Correo: ${to}\n` +
-      (database ? `Empresa / Base de datos: ${database}\n\n` : '\n') +
+      `Usuario / Correo: ${to}\n\n` +
       `Saludos cordiales,\nEquipo de Administración.`;
 
     const html = `
@@ -412,7 +411,6 @@ export class EmailService {
 
         <div style="background-color: #f8fafc; border-left: 4px solid #121b3c; padding: 12px 16px; margin: 20px 0; border-radius: 4px;">
           <p style="margin: 0; color: #475569; font-size: 13px;"><strong>Usuario / Correo asignado:</strong> <span style="color: #1e293b;">${to}</span></p>
-          ${database ? `<p style="margin: 6px 0 0 0; color: #475569; font-size: 13px;"><strong>Base de datos:</strong> ${database}</p>` : ''}
         </div>
 
         <p style="color: #64748b; font-size: 13px; line-height: 1.4;">Si el botón no funciona, también puedes copiar y pegar el siguiente enlace en tu navegador:<br />
